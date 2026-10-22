@@ -62,8 +62,8 @@ def init_dbs():
         cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
         default_sources = [
-            ("BBC Arabic", "https://feeds.bbci.co.uk/arabic/rss.xml", "السويداء"),
-            ("Reuters", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي")
+            ("Sky News Arabia", "https://www.skynewsarabia.com/web/rss", "عالمي"),
+            ("RT Arabic", "https://arabic.rt.com/rss/", "عالمي")
         ]
         cursor.executemany("INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)", default_sources)
         conn.commit()
@@ -93,9 +93,8 @@ def init_dbs():
             language TEXT DEFAULT 'ar'
         )''')
         default_portal_sources = [
-            ("BBC Arabic", "https://feeds.bbci.co.uk/arabic/rss.xml", "عالمي", "ar"),
-            ("Reuters World", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي", "en"),
-            ("i24NEWS", "https://www.i24news.tv/en/rss", "عالمي", "en")
+            ("Sky News", "https://www.skynewsarabia.com/web/rss", "عالمي", "ar"),
+            ("RT Arabic", "https://arabic.rt.com/rss/", "عالمي", "ar")
         ]
         cursor_p.executemany("INSERT OR IGNORE INTO portal_sources (name, url, category, language) VALUES (?, ?, ?, ?)", default_portal_sources)
         conn_p.commit()
@@ -111,7 +110,7 @@ def fetch_portal_news():
         for name, url, category in cursor.fetchall():
             try:
                 feed = feedparser.parse(url)
-                for entry in feed.entries[:3]:
+                for entry in feed.entries[:5]:
                     title = entry.title.strip()
                     cursor.execute("SELECT id FROM news WHERE title = ?", (title,))
                     if not cursor.fetchone():
@@ -156,7 +155,7 @@ def startup_event():
     init_dbs()
     fetch_portal_news()
     try:
-        scheduler.add_job(fetch_portal_news, 'interval', hours=1)
+        scheduler.add_job(fetch_portal_news, 'interval', minutes=30)
         scheduler.start()
     except Exception:
         pass
@@ -210,6 +209,7 @@ ADMIN_HTML = """
         .btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 3px; }
         .btn-approve { background: #2e7d32; color: white; }
         .btn-reject { background: #c62828; color: white; }
+        .btn-fetch { background: #3b82f6; color: white; }
         .btn-edit { background: #1d4ed8; color: white; text-decoration: none; display: inline-block; padding: 6px 12px; border-radius: 4px; }
         input, textarea, select { width: 100%; padding: 10px; background: #1a2332; color: #fff; border: 1px solid #2a364f; border-radius: 4px; box-sizing: border-box; margin-bottom: 10px; }
     </style>
@@ -217,8 +217,9 @@ ADMIN_HTML = """
 <body>
     <h1>BASHAN LINE — لوحة تحكم البث المباشر 🔒</h1>
     <div style="margin-bottom: 15px;">
-        <a href="/news/admin" style="background: #7b1fa2; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">📰 الانتقال إلى لوحة تحكم الموقع الإخباري</a>
-        <a href="/admin/approve_all" style="background: #2e7d32; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block; margin-right: 10px;">اعتماد كافة الأخبار التلقائية المعلقة ✓✓</a>
+        <a href="/news/admin" style="background: #7b1fa2; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block; margin-bottom:5px;">📰 الانتقال إلى لوحة تحكم الموقع الإخباري</a>
+        <a href="/admin/fetch_now" class="btn btn-fetch" style="padding: 8px 16px; text-decoration: none; display: inline-block; margin-right: 10px; margin-bottom:5px;">سحب الأخبار فوراً 🔄</a>
+        <a href="/admin/approve_all" style="background: #2e7d32; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block; margin-right: 10px; margin-bottom:5px;">اعتماد كافة الأخبار التلقائية المعلقة ✓✓</a>
     </div>
     <div class="grid">
         <div>
@@ -241,7 +242,7 @@ ADMIN_HTML = """
                 <h2 style="color: #4ade80;">🎬 اختيار الفيديو المحلي للبث</h2>
                 <form action="/set_active_video" method="post">
                     <select name="video_name" required>
-                        {% for vid in video_files %}<option value="{{ vid }}">{{ vid }}</option>{% endfor %}
+                        {% for vid in video_files %}<option value="{{ vid }}" {% if current_video == '/videos/' + vid %}selected{% endif %}>{{ vid }}</option>{% endfor %}
                     </select><br>
                     <button type="submit" class="btn btn-approve" style="width:100%;">تحديد وتشغيل الفيديو الأساسي</button>
                 </form>
@@ -399,8 +400,13 @@ def admin_panel(username: str = Depends(verify_admin)):
     return Template(ADMIN_HTML).render(
         sweida_news=sweida_news, world_news=world_news, music_files=music_files, video_files=video_files,
         sweida_speed=CURRENT_STATE["sweida_speed"], world_speed=CURRENT_STATE["world_speed"],
-        current_youtube=CURRENT_STATE["youtube_url"], current_banner=CURRENT_STATE["breaking_banner"]
+        current_youtube=CURRENT_STATE["youtube_url"], current_video=CURRENT_STATE["active_video"], current_banner=CURRENT_STATE["breaking_banner"]
     )
+
+@app.get("/admin/fetch_now")
+def fetch_now_endpoint(username: str = Depends(verify_admin)):
+    fetch_portal_news()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.get("/admin/edit_news/{news_id}", response_class=HTMLResponse)
 def edit_news_page(news_id: int, username: str = Depends(verify_admin)):
@@ -536,6 +542,7 @@ ADMIN_PORTAL_HTML = """
     <h1>📰 BASHAN — لوحة تحكم الموقع الإخباري 🔒</h1>
     <div style="margin-top: 15px;">
         <a href="/admin" class="btn-back">⬅ العودة إلى لوحة تحكم البث المباشر</a>
+        <a href="/news/admin/fetch_now" class="btn-back" style="background: #3b82f6; margin-right:10px;">سحب الأخبار فوراً 🔄</a>
         <a href="/news" target="_blank" style="color: #60a5fa; font-weight: bold; margin-right: 15px;">معاينة الموقع الإخباري ↗</a>
     </div>
     
@@ -582,6 +589,11 @@ def portal_admin(username: str = Depends(verify_portal_admin)):
     articles = cursor.fetchall()
     conn.close()
     return Template(ADMIN_PORTAL_HTML).render(articles=articles)
+
+@app.get("/news/admin/fetch_now")
+def portal_fetch_now(username: str = Depends(verify_portal_admin)):
+    fetch_portal_news()
+    return HTMLResponse("<script>window.location.href='/news/admin';</script>")
 
 @app.post("/news/admin/add")
 def portal_add_article(title_ar: str = Form(...), content_ar: str = Form(...), title_en: str = Form(""), content_en: str = Form(""), title_he: str = Form(""), content_he: str = Form(""), category: str = Form(...), author: str = Form(...), username: str = Depends(verify_portal_admin)):
@@ -739,7 +751,7 @@ TICKER_HTML = """
         <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "";
+        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", lastActiveVideo = "";
         const audioPlayer = document.getElementById('audio-player');
 
         function enableAudioAndPlay() {
@@ -832,9 +844,25 @@ TICKER_HTML = """
                     if (state.active_video) {
                         let targetVid = state.active_video;
                         let vidEl = document.getElementById('live-video');
-                        if(!vidEl || vidEl.getAttribute('data-src') !== targetVid) {
-                            stage.innerHTML = `<video id="live-video" class="video-card" data-src="${targetVid}" src="${targetVid}" autoplay playsinline muted loop></video>`;
+                        
+                        if(!vidEl || lastMediaType !== 'video' || lastActiveVideo !== targetVid) {
+                            stage.innerHTML = `<video id="live-video" class="video-card" src="${targetVid}" autoplay playsinline muted loop></video>`;
                             lastMediaType = 'video';
+                            lastActiveVideo = targetVid;
+                            vidEl = document.getElementById('live-video');
+                        }
+                        
+                        if (vidEl) {
+                            let videoOffset = serverTime % (vidEl.duration || 60);
+                            if (isNaN(vidEl.duration) || vidEl.duration === 0) {
+                                videoOffset = 0;
+                            }
+                            if (Math.abs(vidEl.currentTime - videoOffset) > 1.5) {
+                                vidEl.currentTime = videoOffset;
+                            }
+                            if (vidEl.paused) {
+                                vidEl.play().catch(()=>{});
+                            }
                         }
                     }
                     audioPlayer.pause();
