@@ -10,7 +10,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from jinja2 import Template
 import uvicorn
 
-# --- 1. إعداد قواعد البيانات والملفات ---
+# --- 1. إعداد قواعد البيانات والمجلدات ---
 DB_NAME = "bashan_radio.db"
 UPLOAD_DIR = "music_library"
 IMAGES_DIR = "images"
@@ -52,21 +52,24 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     return credentials.username
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
-    default_sources = [
-        ("BBC Arabic - عاجل والشرق الأوسط", "https://feeds.bbci.co.uk/arabic/rss.xml", "الشرق الأوسط"),
-        ("Reuters - الأخبار الرئيسية", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي"),
-        ("CNBC Arabic - اقتصاد وبورصة", "https://www.cnbcarabic.com/rss/news.xml", "اقتصاد"),
-        ("Investing - أسواق المال", "https://sa.investing.com/rss/news.rss", "بورصة"),
-        ("صدى البلد - أبراج وفلك", "https://www.elbalad.news/rss/223", "أبراج"),
-        ("العين الإخبارية - توقعات الأبراج", "https://al-ain.com/rss/horoscope", "أبراج")
-    ]
-    cursor.executemany("INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)", default_sources)
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
+        default_sources = [
+            ("BBC Arabic - عاجل والشرق الأوسط", "https://feeds.bbci.co.uk/arabic/rss.xml", "الشرق الأوسط"),
+            ("Reuters - الأخبار الرئيسية", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي"),
+            ("CNBC Arabic - اقتصاد وبورصة", "https://www.cnbcarabic.com/rss/news.xml", "اقتصاد"),
+            ("Investing - أسواق المال", "https://sa.investing.com/rss/news.rss", "بورصة"),
+            ("صدى البلد - أبراج وفلك", "https://www.elbalad.news/rss/223", "أبراج"),
+            ("العين الإخبارية - توقعات الأبراج", "https://al-ain.com/rss/horoscope", "أبراج")
+        ]
+        cursor.executemany("INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)", default_sources)
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def fetch_global_news():
     try:
@@ -96,13 +99,15 @@ app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 app.mount("/videos", StaticFiles(directory=VIDEOS_DIR), name="videos")
 
 scheduler = BackgroundScheduler()
-scheduler.add_job(fetch_global_news, 'interval', minutes=3)
-scheduler.start()
 
 @app.on_event("startup")
 def startup_event():
     init_db()
-    fetch_global_news()
+    try:
+        scheduler.add_job(fetch_global_news, 'interval', minutes=5)
+        scheduler.start()
+    except Exception:
+        pass
 
 @app.get("/logo.png")
 def get_logo():
@@ -121,6 +126,7 @@ def get_images():
 def get_live_state():
     return CURRENT_STATE
 
+# --- 3. لوحة التحكم الإدارية ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -328,6 +334,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
+# --- 4. واجهة البث المباشر (تلقائية بالكامل وبدون أزرار) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -390,6 +397,14 @@ TICKER_HTML = """
         let currentVideoSrc = "";
         let currentMediaType = "";
 
+        // إلغاء كتم الصوت تلقائياً مع أي حركة غير مرئية للمستخدم
+        document.addEventListener('click', () => {
+            const vid = document.getElementById('live-video');
+            if(vid) vid.muted = false;
+            const aud = document.getElementById('audio-player');
+            if(aud) aud.muted = false;
+        }, { once: true });
+
         async function loadImages() {
             try {
                 const res = await fetch('/api/get_images');
@@ -441,7 +456,12 @@ TICKER_HTML = """
                         
                         setTimeout(() => {
                             const vid = document.getElementById('live-video');
-                            if(vid) vid.play().catch(e=>{});
+                            if(vid) {
+                                vid.play().then(() => { vid.muted = false; }).catch(() => {
+                                    vid.muted = true;
+                                    vid.play();
+                                });
+                            }
                         }, 200);
                     }
                 } 
