@@ -4,7 +4,7 @@ import secrets
 import time
 import feedparser
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -183,7 +183,7 @@ def get_songs():
 @app.get("/api/get_videos")
 def get_videos():
     if os.path.exists(VIDEOS_DIR):
-        return [f"/videos/{f}" for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))]
+        return sorted([f"/videos/{f}" for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))], key=str.lower)
     return []
 
 @app.get("/api/live_state")
@@ -289,9 +289,10 @@ ADMIN_HTML = """
                     {% for vid in video_files %}<option value="/videos/{{ vid }}">🎬 {{ vid }}</option>{% endfor %}
                     </optgroup>
                 </select>
-                <button type="button" class="btn" style="background:#0891b2;color:#fff;width:100%;" onclick="addPlaylistItem()">إضافة الملف المحدد للقائمة +</button>
-                <form action="/set_program_playlist" method="post">
-                    <textarea id="playlist-items" name="items" rows="6" placeholder="/music/song1.mp3&#10;/videos/program1.mp4" style="direction:ltr;text-align:left;"></textarea>
+                <button type="button" id="add-playlist-item" class="btn" style="background:#0891b2;color:#fff;width:100%;" onclick="addPlaylistItem()">إضافة الملف المحدد للقائمة +</button>
+                <form id="program-playlist-form" action="/set_program_playlist" method="post">
+                    <textarea id="playlist-items" name="items" rows="6" placeholder="/music/song1.mp3&#10;/videos/program1.mp4" style="direction:ltr;text-align:left;">{{ playlist_items_text }}</textarea>
+                    <div id="playlist-status" role="status" style="min-height:22px;margin:6px 0;color:#67e8f9;"></div>
                     <button type="submit" class="btn btn-approve" style="width:100%;">حفظ وتشغيل القائمة بالتتابع إلى ما لا نهاية ▶</button>
                 </form>
                 <a href="/admin/stop_playlist" class="btn" style="display:block;text-align:center;background:#c62828;color:#fff;text-decoration:none;margin-top:8px;">إيقاف القائمة</a>
@@ -299,9 +300,44 @@ ADMIN_HTML = """
                 function addPlaylistItem() {
                     const picker = document.getElementById('playlist-file-picker');
                     const area = document.getElementById('playlist-items');
-                    if (!picker.value) return;
-                    area.value = area.value.trim() ? area.value.trim() + '\n' + picker.value : picker.value;
+                    const status = document.getElementById('playlist-status');
+                    if (!picker || !picker.value) {
+                        if (status) status.textContent = 'لا توجد ملفات متاحة؛ تحقق من رفع ملفات الموسيقى أو الفيديو أولاً.';
+                        return;
+                    }
+                    const value = picker.value.trim();
+                    const lines = area.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+                    lines.push(value);
+                    area.value = lines.join('\n');
+                    area.dispatchEvent(new Event('input', {bubbles:true}));
+                    area.focus();
+                    area.scrollTop = area.scrollHeight;
+                    if (status) status.textContent = 'تمت إضافة الملف إلى القائمة. عدد العناصر: ' + lines.length;
                 }
+                document.getElementById('program-playlist-form').addEventListener('submit', async function(event) {
+                    event.preventDefault();
+                    const area = document.getElementById('playlist-items');
+                    const status = document.getElementById('playlist-status');
+                    const items = area.value.trim();
+                    if (!items) { status.textContent = 'أضف ملفاً واحداً على الأقل قبل تشغيل القائمة.'; return; }
+                    status.textContent = 'جارٍ حفظ القائمة وتشغيلها…';
+                    try {
+                        const response = await fetch('/set_program_playlist', {
+                            method: 'POST',
+                            headers: {'Content-Type':'application/json', 'Accept':'application/json'},
+                            body: JSON.stringify({items})
+                        });
+                        const result = await response.json();
+                        if (!response.ok || !result.ok) {
+                            status.textContent = result.detail || result.message || 'تعذر حفظ القائمة. تحقق من امتدادات الملفات ووجودها.';
+                            return;
+                        }
+                        status.textContent = 'تم حفظ القائمة وتشغيلها. عدد الملفات: ' + result.count;
+                        setTimeout(() => window.location.reload(), 700);
+                    } catch (error) {
+                        status.textContent = 'تعذر الاتصال بالخادم. أعد المحاولة.';
+                    }
+                });
                 </script>
             </div>
 
@@ -476,7 +512,8 @@ def admin_panel(username: str = Depends(verify_admin)):
     return Template(ADMIN_HTML).render(
         sweida_news=sweida_news, world_news=world_news, music_files=music_files, video_files=video_files,
         sweida_speed=CURRENT_STATE["sweida_speed"], world_speed=CURRENT_STATE["world_speed"],
-        current_youtube=CURRENT_STATE["youtube_url"], current_video=CURRENT_STATE["active_video"], current_banner=CURRENT_STATE["breaking_banner"]
+        current_youtube=CURRENT_STATE["youtube_url"], current_video=CURRENT_STATE["active_video"], current_banner=CURRENT_STATE["breaking_banner"],
+        playlist_items_text="\n".join(item.get("url", "") for item in CURRENT_STATE.get("playlist", []))
     )
 
 @app.get("/admin/fetch_now")
@@ -578,11 +615,27 @@ def set_active_song(song_name: str = Form(None), username: str = Depends(verify_
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_program_playlist")
-def set_program_playlist(items: str = Form(...), username: str = Depends(verify_admin)):
+async def set_program_playlist(request: Request, username: str = Depends(verify_admin)):
+    """Accept either JSON {items: "..."} or a normal HTML form submission."""
+    items_text = ""
+    content_type = request.headers.get("content-type", "").lower()
+    try:
+        if "application/json" in content_type:
+            payload = await request.json()
+            if isinstance(payload, dict):
+                items_text = str(payload.get("items", "") or "")
+            elif isinstance(payload, list):
+                items_text = "\n".join(str(x) for x in payload)
+        else:
+            form_data = await request.form()
+            items_text = str(form_data.get("items", "") or "")
+    except Exception:
+        items_text = ""
+
     allowed = []
     music_ext = ('.mp3', '.wav', '.ogg', '.m4a')
     video_ext = ('.mp4', '.webm')
-    for raw in items.splitlines():
+    for raw in items_text.splitlines():
         item = raw.strip()
         if not item:
             continue
@@ -591,13 +644,15 @@ def set_program_playlist(items: str = Form(...), username: str = Depends(verify_
             allowed.append({"url": f"/music/{filename}", "kind": "audio"})
         elif item.startswith("/videos/") and filename.lower().endswith(video_ext) and os.path.isfile(os.path.join(VIDEOS_DIR, filename)):
             allowed.append({"url": f"/videos/{filename}", "kind": "video"})
+
     if not allowed:
-        return HTMLResponse("<script>alert('أضف ملف موسيقى أو فيديو واحداً على الأقل');window.location.href='/admin';</script>")
+        return JSONResponse(status_code=400, content={"ok": False, "message": "لم يتم العثور على ملفات صالحة. تأكد من أن كل سطر يحتوي مسار ملف موجوداً مثل /music/song.mp3 أو /videos/program.mp4."})
+
     CURRENT_STATE["playlist"] = allowed
     CURRENT_STATE["playlist_started_at"] = time.time()
     CURRENT_STATE["media_type"] = "playlist"
     CURRENT_STATE["active_song"] = ""
-    return HTMLResponse("<script>window.location.href='/admin';</script>")
+    return JSONResponse(content={"ok": True, "count": len(allowed), "message": "تم تشغيل القائمة"})
 
 @app.get("/admin/stop_playlist")
 def stop_program_playlist(username: str = Depends(verify_admin)):
@@ -843,11 +898,11 @@ TICKER_HTML = """
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
-        .ticker-move { display: inline-block; white-space: nowrap; padding-left: 100%; padding-right: 0; font-size: 17px; color: #ffffff; will-change: transform; }
+        .ticker-move { display: inline-block; white-space: nowrap; padding-left: 0; padding-right: 100%; font-size: 17px; color: #ffffff; will-change: transform; }
         .ticker-item { display: inline-block; padding: 0 20px; }
         #touch-overlay { position: fixed; bottom: 62px; left: 12px; width: auto; height: auto; z-index: 9999; background: rgba(0,0,0,.72); color: #fff; border: 1px solid #d4af37; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-size: 14px; }
         .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
-        @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-100%, 0, 0); } }
+        @keyframes ticker-ltr { 0% { transform: translate3d(-100%, 0, 0); } 100% { transform: translate3d(100vw, 0, 0); } }
     </style>
 </head>
 <body>
@@ -866,6 +921,7 @@ TICKER_HTML = """
     </div>
     <script>
         let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", activeVideoUrl = "";
+        let folderVideoPlaylistActive = false, folderVideoBaseUrl = "";
         const audioPlayer = document.getElementById('audio-player');
 
         function enableAudioAndPlay() {
@@ -914,7 +970,7 @@ TICKER_HTML = """
             const value = Math.max(30, Math.min(600, Number(seconds) || 90));
             if (!el) return;
             // Restart only when the admin changes the speed, not during every poll.
-            el.style.animation = `ticker ${value}s linear infinite`;
+            el.style.animation = `ticker-ltr ${value}s linear infinite`;
         }
 
         function syncAudio(serverTime, activeSongSetting) {
@@ -1000,13 +1056,24 @@ TICKER_HTML = """
                         vid.play().catch(() => { vid.muted = true; vid.play().catch(()=>{}); });
                     }, {once:true});
                     vid.addEventListener('ended', () => {
-                        // Ask the state loop to recalculate the next server-synchronized item immediately.
+                        // If metadata probing failed and used the fallback duration, learn the real duration
+                        // so the server-clock playlist can advance instead of restarting the same clip.
+                        const actualDuration = Number(vid.duration);
+                        if (Number.isFinite(actualDuration) && actualDuration > 0) {
+                            playlistDurations[item.url] = actualDuration;
+                        } else {
+                            playlistDurations[item.url] = Math.max(1, Number(vid.currentTime) || pos || 1);
+                        }
                         lastPlaylistItem = '';
                         lastMediaType = '';
                         checkLiveState();
                     }, {once:true});
                     vid.addEventListener('error', () => {
                         console.warn('تعذر تشغيل ملف الفيديو. استخدم MP4 (H.264/AAC) أو WebM:', item.url);
+                        // Move past an unreadable item rather than retrying it forever.
+                        playlistDurations[item.url] = Math.max(1, pos + 1);
+                        lastPlaylistItem = '';
+                        lastMediaType = '';
                     }, {once:true});
                     lastMediaType = 'playlist-video';
                     lastPlaylistItem = item.url;
@@ -1062,6 +1129,7 @@ TICKER_HTML = """
                 
                 const stage = document.getElementById('stage-container');
                 
+                if(state.media_type !== 'video') { folderVideoPlaylistActive = false; folderVideoBaseUrl = ''; }
                 if(state.media_type === 'youtube' && state.youtube_url) {
                     let embedUrl = getYoutubeEmbedUrl(state.youtube_url);
                     if(embedUrl && (lastMediaType !== 'youtube' || lastYoutubeUrl !== state.youtube_url)) {
@@ -1074,31 +1142,44 @@ TICKER_HTML = """
                 } 
                 else if(state.media_type === 'video') {
                     if (state.active_video) {
-                        let targetVid = state.active_video;
+                        const targetVid = state.active_video;
                         let vidEl = document.getElementById('live-video');
-                        
-                        if (!vidEl || lastMediaType !== 'video' || activeVideoUrl !== targetVid) {
-                            stage.innerHTML = `<video id="live-video" class="video-card" src="${targetVid}" autoplay playsinline loop></video>`;
-                            lastMediaType = 'video';
-                            activeVideoUrl = targetVid;
-                            vidEl = document.getElementById('live-video');
-                        }
-                        
-                        if (vidEl) {
-                            let videoOffset = serverTime % (vidEl.duration || 60);
-                            if (isNaN(vidEl.duration) || vidEl.duration === 0) {
-                                videoOffset = 0;
+
+                        // إذا بدأنا التنقل التلقائي بين ملفات مجلد videos، لا نرجع للفيديو الأول
+                        // في كل استعلام حالة؛ نستمر حتى يغيّر الأدمن وضع البث أو يختار فيديو آخر.
+                        if (folderVideoPlaylistActive && folderVideoBaseUrl === targetVid && vidEl) {
+                            if (vidEl.paused) vidEl.play().catch(() => { vidEl.muted = true; vidEl.play().catch(()=>{}); });
+                        } else {
+                            folderVideoPlaylistActive = false;
+                            folderVideoBaseUrl = targetVid;
+                            if (!vidEl || lastMediaType !== 'video' || activeVideoUrl !== targetVid) {
+                                stage.innerHTML = `<video id="live-video" class="video-card" src="${targetVid}" autoplay playsinline preload="auto"></video>`;
+                                lastMediaType = 'video';
+                                activeVideoUrl = targetVid;
+                                vidEl = document.getElementById('live-video');
                             }
-                            if (Math.abs(vidEl.currentTime - videoOffset) > 2.0) {
-                                vidEl.currentTime = videoOffset;
-                            }
-                            if (vidEl.paused) {
-                                vidEl.muted = false;
-                                vidEl.play().catch(() => {
-                                    // بعض المتصفحات تمنع الصوت التلقائي؛ شغّل الفيديو صامتاً إلى أن يتفاعل المشاهد.
-                                    vidEl.muted = true;
-                                    vidEl.play().catch(()=>{});
-                                });
+                            if (vidEl) {
+                                vidEl.loop = videoList.length === 1;
+                                vidEl.onended = () => {
+                                    // تشغيل ملفات مجلد الفيديو بالتتابع وإعادة القائمة من البداية إلى ما لا نهاية.
+                                    if (videoList.length < 2) return;
+                                    const currentUrl = activeVideoUrl || targetVid;
+                                    let currentIndex = videoList.indexOf(currentUrl);
+                                    if (currentIndex < 0) currentIndex = videoList.indexOf(targetVid);
+                                    const nextUrl = videoList[(currentIndex + 1 + videoList.length) % videoList.length];
+                                    if (!nextUrl) return;
+                                    folderVideoPlaylistActive = true;
+                                    folderVideoBaseUrl = targetVid;
+                                    activeVideoUrl = nextUrl;
+                                    vidEl.src = nextUrl;
+                                    vidEl.load();
+                                    vidEl.play().catch(() => { vidEl.muted = true; vidEl.play().catch(()=>{}); });
+                                };
+                                // لا نعيد ضبط موضع الفيديو كل 400ms؛ ذلك قد يمنع الحدث ended من الحدوث.
+                                if (vidEl.paused) {
+                                    vidEl.muted = false;
+                                    vidEl.play().catch(() => { vidEl.muted = true; vidEl.play().catch(()=>{}); });
+                                }
                             }
                         }
                     }
@@ -1146,6 +1227,10 @@ TICKER_HTML = """
                 if(!w) w = `<div class="ticker-item">تغطية مستمرة عبر باشان</div> • `;
                 document.getElementById('top-ticker-content').innerHTML = s;
                 document.getElementById('ticker-content').innerHTML = w;
+                const topSpeed = lastTickerSpeeds.top || 90;
+                const bottomSpeed = lastTickerSpeeds.bottom || 90;
+                applyTickerSpeed('top', topSpeed);
+                applyTickerSpeed('bottom', bottomSpeed);
             } catch(e){}
         }
 
