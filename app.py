@@ -111,8 +111,11 @@ def fetch_portal_news():
         for name, url, category in cursor.fetchall():
             try:
                 feed = feedparser.parse(url)
-                for entry in feed.entries[:2]:
-                    cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name, status) VALUES (?, ?, ?, 'pending')", (entry.title.strip(), category, name))
+                for entry in feed.entries[:3]:
+                    title = entry.title.strip()
+                    cursor.execute("SELECT id FROM news WHERE title = ?", (title,))
+                    if not cursor.fetchone():
+                        cursor.execute("INSERT INTO news (title, category, source_name, status) VALUES (?, ?, ?, 'pending')", (title, category, name))
             except Exception:
                 pass
         conn.commit()
@@ -122,16 +125,21 @@ def fetch_portal_news():
         cursor_p = conn_p.cursor()
         cursor_p.execute("SELECT name, url, category FROM portal_sources")
         for name, url, category in cursor_p.fetchall():
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:3]:
-                title = entry.title.strip()
-                summary = getattr(entry, 'summary', title)
-                pub_date = getattr(entry, 'published', 'حديثاً')
-                cursor_p.execute("""
-                    INSERT OR IGNORE INTO articles 
-                    (title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
-                """, (title, summary, title, summary, title, summary, category, name, "مراسلو الوكالات", pub_date))
+            try:
+                feed = feedparser.parse(url)
+                for entry in feed.entries[:3]:
+                    title = entry.title.strip()
+                    summary = getattr(entry, 'summary', title)
+                    pub_date = getattr(entry, 'published', 'حديثاً')
+                    cursor_p.execute("SELECT id FROM articles WHERE title_ar = ?", (title,))
+                    if not cursor_p.fetchone():
+                        cursor_p.execute("""
+                            INSERT INTO articles 
+                            (title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at, status)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
+                        """, (title, summary, title, summary, title, summary, category, name, "وكالات تلقائية", pub_date))
+            except Exception:
+                pass
         conn_p.commit()
         conn_p.close()
     except Exception:
@@ -148,7 +156,7 @@ def startup_event():
     init_dbs()
     fetch_portal_news()
     try:
-        scheduler.add_job(fetch_portal_news, 'interval', hours=2)
+        scheduler.add_job(fetch_portal_news, 'interval', hours=1)
         scheduler.start()
     except Exception:
         pass
@@ -184,7 +192,7 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث المباشر (الشرايط المفصولة + التعديل) ---
+# --- 3. لوحة تحكم البث المباشر (الشرايط المفصولة + الفيديوهات + التعديل) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -210,15 +218,15 @@ ADMIN_HTML = """
     <h1>BASHAN LINE — لوحة تحكم البث المباشر 🔒</h1>
     <div style="margin-bottom: 15px;">
         <a href="/news/admin" style="background: #7b1fa2; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">📰 الانتقال إلى لوحة تحكم الموقع الإخباري</a>
-        <a href="/admin/approve_all" style="background: #2e7d32; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block; margin-right: 10px;">اعتماد كافة الأخبار المعلقة ✓✓</a>
+        <a href="/admin/approve_all" style="background: #2e7d32; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block; margin-right: 10px;">اعتماد كافة الأخبار التلقائية المعلقة ✓✓</a>
     </div>
     <div class="grid">
         <div>
             <div class="card" style="border: 2px solid #3b82f6;">
-                <h2 style="color: #60a5fa;">📺 وضع العرض على الشاشة</h2>
-                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:31%; padding:10px;">عرض الصور والموسيقى 🖼️</button></a>
-                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:31%; padding:10px;">الفيديوهات 🎬</button></a>
-                <a href="/admin/clear_stage"><button class="btn" style="background:#c62828; color:#fff; width:30%; padding:10px;">إيقاف ❌</button></a>
+                <h2 style="color: #60a5fa;">📺 وضع العرض السريع</h2>
+                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:31%; padding:10px;">عرض الصور 🖼️</button></a>
+                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:31%; padding:10px;">الفيديو المحلي 🎬</button></a>
+                <a href="/admin/clear_stage"><button class="btn" style="background:#c62828; color:#fff; width:30%; padding:10px;">إيقاف الكل ❌</button></a>
             </div>
 
             <div class="card" style="border: 2px solid #ff0000;">
@@ -226,6 +234,16 @@ ADMIN_HTML = """
                 <form action="/set_youtube_video" method="post">
                     <input type="text" name="youtube_url" value="{{ current_youtube }}" placeholder="ضع رابط يوتيوب هنا..." required>
                     <button type="submit" class="btn" style="background:#ff0000; color:#fff; width:100%;">تشغيل يوتيوب فوراً 🚀</button>
+                </form>
+            </div>
+
+            <div class="card" style="border: 2px solid #4ade80;">
+                <h2 style="color: #4ade80;">🎬 اختيار الفيديو المحلي للبث</h2>
+                <form action="/set_active_video" method="post">
+                    <select name="video_name" required>
+                        {% for vid in video_files %}<option value="{{ vid }}">{{ vid }}</option>{% endfor %}
+                    </select><br>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تحديد وتشغيل الفيديو الأساسي</button>
                 </form>
             </div>
 
@@ -279,7 +297,7 @@ ADMIN_HTML = """
 
         <div>
             <div class="card" style="border: 2px solid #d4af37;">
-                <h2 style="color: #d4af37;">✍️ إضافة خبر جديد للشريط</h2>
+                <h2 style="color: #d4af37;">✍️ إضافة خبر جديد للشريط يدوياً</h2>
                 <form action="/admin/add_ticker_news" method="post">
                     <input type="text" name="title" placeholder="اكتب نص الخبر..." required>
                     <select name="category">
@@ -377,8 +395,9 @@ def admin_panel(username: str = Depends(verify_admin)):
     world_news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
+    video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
     return Template(ADMIN_HTML).render(
-        sweida_news=sweida_news, world_news=world_news, music_files=music_files,
+        sweida_news=sweida_news, world_news=world_news, music_files=music_files, video_files=video_files,
         sweida_speed=CURRENT_STATE["sweida_speed"], world_speed=CURRENT_STATE["world_speed"],
         current_youtube=CURRENT_STATE["youtube_url"], current_banner=CURRENT_STATE["breaking_banner"]
     )
@@ -456,6 +475,12 @@ def clear_stage(username: str = Depends(verify_admin)):
 def set_youtube_video(youtube_url: str = Form(...), username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "youtube"
     CURRENT_STATE["youtube_url"] = youtube_url.strip()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.post("/set_active_video")
+def set_active_video(video_name: str = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["media_type"] = "video"
+    CURRENT_STATE["active_video"] = f"/videos/{video_name}"
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_active_song")
@@ -804,21 +829,18 @@ TICKER_HTML = """
                     currentSongPath = "";
                 } 
                 else if(state.media_type === 'video') {
-                    if(videoList.length > 0) {
-                        let vidDuration = 60;
-                        let pTime = serverTime % (videoList.length * vidDuration);
-                        let vIdx = Math.floor(pTime / vidDuration);
-                        let targetVid = videoList[vIdx];
+                    if (state.active_video) {
+                        let targetVid = state.active_video;
                         let vidEl = document.getElementById('live-video');
                         if(!vidEl || vidEl.getAttribute('data-src') !== targetVid) {
-                            stage.innerHTML = `<video id="live-video" class="video-card" data-src="${targetVid}" src="${targetVid}" autoplay playsinline muted></video>`;
+                            stage.innerHTML = `<video id="live-video" class="video-card" data-src="${targetVid}" src="${targetVid}" autoplay playsinline muted loop></video>`;
                             lastMediaType = 'video';
                         }
                     }
                     audioPlayer.pause();
                     currentSongPath = "";
                 } 
-                else {
+                else if(state.media_type === 'image') {
                     if(lastMediaType !== 'image') {
                         stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
                         lastMediaType = 'image';
@@ -833,6 +855,10 @@ TICKER_HTML = """
                         audioPlayer.pause();
                         currentSongPath = "";
                     }
+                } else {
+                    stage.innerHTML = ``;
+                    audioPlayer.pause();
+                    currentSongPath = "";
                 }
             } catch(e){}
         }
