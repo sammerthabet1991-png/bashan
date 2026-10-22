@@ -1,4 +1,4 @@
-import os
+ import os
 import sqlite3
 import secrets
 import feedparser
@@ -34,10 +34,10 @@ CURRENT_STATE = {
     "world_speed": 90
 }
 
-# --- 2. إعدادات حماية لوحة التحكم (اسم المستخدم وكلمة المرور) ---
+# --- 2. إعدادات حماية لوحة التحكم ---
 security = HTTPBasic()
-ADMIN_USER = "admin"        # يمكنك تغيير اسم المستخدم من هنا
-ADMIN_PASS = "Bashan2026!"  # يمكنك تغيير كلمة المرور من هنا
+ADMIN_USER = "admin"
+ADMIN_PASS = "Bashan2026!"
 
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     is_user_ok = secrets.compare_digest(credentials.username, ADMIN_USER)
@@ -81,7 +81,7 @@ def fetch_global_news():
                 title = entry.title.strip()
                 if any(kw in title for kw in keywords) or category in ["اقتصاد", "بورصة", "أبراج"]:
                     cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name) VALUES (?, ?, ?)", (title, category, name))
-        except Exception as e:
+        except Exception:
             pass
     conn.commit()
     conn.close()
@@ -117,7 +117,7 @@ def get_images():
 def get_live_state():
     return CURRENT_STATE
 
-# --- 3. لوحة التحكم الإدارية (محمية بالرمز السرّي) ---
+# --- 3. لوحة التحكم الإدارية ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -144,14 +144,12 @@ ADMIN_HTML = """
     <h1>BASHAN LINE — لوحة التحكم والإدارة الإذاعية 🔒</h1>
     <div class="grid">
         <div>
-            <!-- أزرار التبديل -->
             <div class="card" style="border: 2px solid #3b82f6;">
                 <h2 style="color: #60a5fa;">📺 وضع العرض الرئيسي على الشاشة</h2>
                 <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:48%; padding:10px;">عرض سلايد شو الصور 🖼️</button></a>
                 <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:48%; padding:10px;">عرض بث الفيديو 🎬</button></a>
             </div>
 
-            <!-- سرعة السويداء -->
             <div class="card" style="border: 2px solid #7b1fa2;">
                 <h2 style="color: #ab47bc;">🟣 التحكم بسرعة شريط السويداء</h2>
                 <form action="/set_sweida_speed" method="post">
@@ -165,7 +163,6 @@ ADMIN_HTML = """
                 </form>
             </div>
 
-            <!-- سرعة العالمي -->
             <div class="card" style="border: 2px solid #d4af37;">
                 <h2 style="color: #d4af37;">⚡ التحكم بسرعة الشريط العالمي</h2>
                 <form action="/set_world_speed" method="post">
@@ -179,7 +176,6 @@ ADMIN_HTML = """
                 </form>
             </div>
 
-            <!-- الفيديو -->
             <div class="card">
                 <h2>🎬 اختيار فيديو البث المباشر</h2>
                 <form action="/set_active_video" method="post">
@@ -192,7 +188,6 @@ ADMIN_HTML = """
                 </form>
             </div>
 
-            <!-- الموسيقى -->
             <div class="card">
                 <h2>🎵 تشغيل الموسيقى الخلفية (مع الصور)</h2>
                 <form action="/set_active_song" method="post">
@@ -206,7 +201,6 @@ ADMIN_HTML = """
                 </form>
             </div>
             
-            <!-- العاجل -->
             <div class="card" style="border: 2px solid #c62828;">
                 <h2 style="color: #ff5252;">🚨 نشر خبر عاجل بارز</h2>
                 <form action="/set_breaking_banner" method="post">
@@ -250,7 +244,7 @@ def admin_panel(username: str = Depends(verify_admin)):
     conn.close()
     
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
-    video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi'))] if os.path.exists(VIDEOS_DIR) else []
+    video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
     
     from jinja2 import Template
     return Template(ADMIN_HTML).render(
@@ -329,7 +323,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     conn.commit()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- 4. واجهة البث الحي التفاعلية المباشرة (عامة للمشاهدين بدون كلمة سر) ---
+# --- 4. واجهة البث المباشر (تلقائية بالكامل وبدون أزرار) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -357,16 +351,12 @@ TICKER_HTML = """
         .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
         .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 20px; color: #ffffff; }
         .ticker-item { display: inline-block; padding: 0 25px; }
-        
-        #unmute-btn { display:none; position:fixed; top:20px; left:20px; background:#e50914; color:#fff; padding:10px 20px; border-radius:8px; font-weight:bold; cursor:pointer; z-index:9999; box-shadow:0 4px 10px rgba(0,0,0,0.5); }
 
         @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(100%, 0, 0); } }
     </style>
 </head>
 <body>
     <div class="corner-logo"><img src="/logo.png" alt="BASHAN LINE Logo"></div>
-
-    <div id="unmute-btn" onclick="forcePlayMedia()">🔇 انقر هنا لتفعيل الصوت</div>
 
     <div class="top-ticker-container">
         <div class="top-ticker-title">أخبار السويداء</div>
@@ -377,7 +367,7 @@ TICKER_HTML = """
         <div class="image-card" id="main-image"></div>
     </div>
 
-    <audio id="audio-player" style="display:none;"></audio>
+    <audio id="audio-player" style="display:none;" autoplay></audio>
 
     <div class="breaking-banner" id="breaking-banner">
         <span style="background:#000; color:#ffeb3b; padding:2px 8px; border-radius:4px; margin-left:12px; font-size:16px;">🔴 عاجل</span>
@@ -395,24 +385,6 @@ TICKER_HTML = """
         let lastPlayedSong = "";
         let currentVideoSrc = "";
         let currentMediaType = "";
-
-        function forcePlayMedia() {
-            document.getElementById('unmute-btn').style.display = 'none';
-            if (currentMediaType === 'video') {
-                const vid = document.getElementById('live-video');
-                if (vid) {
-                    vid.muted = false;
-                    vid.play().catch(e=>{});
-                }
-            } else {
-                const audioPlayer = document.getElementById('audio-player');
-                if (audioPlayer && audioPlayer.src) {
-                    audioPlayer.play().catch(e=>{});
-                }
-            }
-        }
-
-        document.body.addEventListener('click', forcePlayMedia);
 
         async function loadImages() {
             try {
@@ -461,18 +433,11 @@ TICKER_HTML = """
                         currentVideoSrc = state.active_video;
                         audioPlayer.pause();
                         
-                        stage.innerHTML = `<video id="live-video" class="video-card" src="${currentVideoSrc}" autoplay loop muted playsinline></video>`;
+                        stage.innerHTML = `<video id="live-video" class="video-card" src="${currentVideoSrc}" autoplay loop playsinline></video>`;
                         
                         setTimeout(() => {
                             const vid = document.getElementById('live-video');
-                            if(vid) {
-                                vid.play().then(() => {
-                                    vid.muted = false;
-                                    document.getElementById('unmute-btn').style.display = 'none';
-                                }).catch(e => {
-                                    document.getElementById('unmute-btn').style.display = 'block';
-                                });
-                            }
+                            if(vid) vid.play().catch(e=>{});
                         }, 200);
                     }
                 } 
@@ -494,11 +459,7 @@ TICKER_HTML = """
                     }
 
                     if (state.active_song && audioPlayer.paused) {
-                        audioPlayer.play().then(() => {
-                            document.getElementById('unmute-btn').style.display = 'none';
-                        }).catch(e => {
-                            document.getElementById('unmute-btn').style.display = 'block';
-                        });
+                        audioPlayer.play().catch(e=>{});
                     }
                 }
 
