@@ -216,13 +216,13 @@ ADMIN_HTML = """
         <div>
             <div class="card" style="border: 2px solid #3b82f6;">
                 <h2 style="color: #60a5fa;">📺 وضع العرض على الشاشة</h2>
-                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:48%; padding:10px;">عرض الصور 🖼️</button></a>
-                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:48%; padding:10px;">عرض الفيديوهات 🎬</button></a>
+                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:32%; padding:10px;">عرض الصور 🖼️</button></a>
+                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:32%; padding:10px;">الفيديوهات 🎬</button></a>
+                <a href="/admin/clear_stage"><button class="btn" style="background:#c62828; color:#fff; width:30%; padding:10px;">إيقاف الكل ❌</button></a>
             </div>
 
-            <!-- ميزة عرض فيديو يوتيوب بدون أي آثار أو شعارات -->
             <div class="card" style="border: 2px solid #ff0000;">
-                <h2 style="color: #ff4444;">▶️ عرض فيديو يوتيوب مخفي الأدوات</h2>
+                <h2 style="color: #ff4444;">▶️ عرض فيديو يوتيوب (بدون أزرار وسطى)</h2>
                 <form action="/set_youtube_video" method="post">
                     <label>ضع رابط يوتيوب هنا:</label>
                     <input type="text" name="youtube_url" placeholder="https://www.youtube.com/watch?v=XXXXX" required>
@@ -231,24 +231,28 @@ ADMIN_HTML = """
             </div>
 
             <div class="card" style="border: 2px solid #7b1fa2;">
-                <h2 style="color: #ab47bc;">🟣 سرعة شريط السويداء</h2>
+                <h2 style="color: #ab47bc;">🟣 سرعة شريط السويداء (العلوي)</h2>
                 <form action="/set_sweida_speed" method="post">
                     <select name="sweida_speed">
-                        <option value="120" {% if sweida_speed == 120 %}selected{% endif %}>بطيء</option>
-                        <option value="90" {% if sweida_speed == 90 %}selected{% endif %}>مريح (افتراضي)</option>
-                        <option value="45" {% if sweida_speed == 45 %}selected{% endif %}>سريع</option>
+                        <option value="160" {% if sweida_speed == 160 %}selected{% endif %}>بطيء جداً (160 ثانية)</option>
+                        <option value="120" {% if sweida_speed == 120 %}selected{% endif %}>بطيء (120 ثانية)</option>
+                        <option value="90" {% if sweida_speed == 90 %}selected{% endif %}>مريح - افتراضي (90 ثانية)</option>
+                        <option value="60" {% if sweida_speed == 60 %}selected{% endif %}>سريع (60 ثانية)</option>
+                        <option value="35" {% if sweida_speed == 35 %}selected{% endif %}>سريع جداً (35 ثانية)</option>
                     </select><br>
                     <button type="submit" class="btn" style="background:#7b1fa2; color:#fff; width:100%;">تعديل سرعة الشريط العلوي</button>
                 </form>
             </div>
 
             <div class="card" style="border: 2px solid #d4af37;">
-                <h2 style="color: #d4af37;">⚡ سرعة شريط الأحداث العالمية</h2>
+                <h2 style="color: #d4af37;">⚡ سرعة شريط الأحداث العالمية (السفلي)</h2>
                 <form action="/set_world_speed" method="post">
                     <select name="world_speed">
-                        <option value="120" {% if world_speed == 120 %}selected{% endif %}>بطيء</option>
-                        <option value="90" {% if world_speed == 90 %}selected{% endif %}>مريح (افتراضي)</option>
-                        <option value="45" {% if world_speed == 45 %}selected{% endif %}>سريع</option>
+                        <option value="160" {% if world_speed == 160 %}selected{% endif %}>بطيء جداً (160 ثانية)</option>
+                        <option value="120" {% if world_speed == 120 %}selected{% endif %}>بطيء (120 ثانية)</option>
+                        <option value="90" {% if world_speed == 90 %}selected{% endif %}>مريح - افتراضي (90 ثانية)</option>
+                        <option value="60" {% if world_speed == 60 %}selected{% endif %}>سريع (60 ثانية)</option>
+                        <option value="35" {% if world_speed == 35 %}selected{% endif %}>سريع جداً (35 ثانية)</option>
                     </select><br>
                     <button type="submit" class="btn btn-approve" style="width:100%;">تعديل سرعة الشريط السفلي</button>
                 </form>
@@ -302,20 +306,24 @@ ADMIN_HTML = """
             </div>
 
             <div class="card">
-                <h2>أخبار البث الواردة وقيد المراجعة</h2>
+                <h2>إدارة وحذف أخبار الشريطين (الأول والثاني)</h2>
                 <table>
-                    <tr><th>التصنيف</th><th>الخبر</th><th>الحالة / إجراء</th></tr>
+                    <tr><th>التصنيف والشريط</th><th>الخبر</th><th>الإجراء</th></tr>
                     {% for item in news %}
                     <tr>
-                        <td><span class="badge" style="background:#7b1fa2; color:#fff;">{{ item[2] }}</span></td>
+                        <td>
+                            <span class="badge" style="background:{% if item[2] == 'السويداء' %}#7b1fa2{% else %}#d4af37{% endif %}; color:#fff;">
+                                {{ item[2] }}
+                            </span>
+                        </td>
                         <td>{{ item[1] }}</td>
                         <td style="white-space:nowrap;">
                             {% if item[4] == 'pending' %}
-                            <a href="/approve/{{ item[0] }}"><button class="btn btn-approve">اعتماد</button></a>
+                            <a href="/approve/{{ item[0] }}"><button class="btn btn-approve" style="padding:4px 8px; font-size:11px;">اعتماد</button></a>
                             {% else %}
-                            <span style="color:#4ade80; font-weight:bold; font-size:12px;">معتمد ✓</span>
+                            <span style="color:#4ade80; font-weight:bold; font-size:11px;">معتمد ✓</span>
                             {% endif %}
-                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject">حذف</button></a>
+                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:4px 8px; font-size:11px;">حذف 🗑️</button></a>
                         </td>
                     </tr>
                     {% endfor %}
@@ -331,7 +339,7 @@ ADMIN_HTML = """
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category, source_name, status FROM news ORDER BY id DESC LIMIT 40")
+    cursor.execute("SELECT id, title, category, source_name, status FROM news ORDER BY id DESC LIMIT 50")
     news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
@@ -370,6 +378,13 @@ def switch_to_images(username: str = Depends(verify_admin)):
 @app.get("/switch_to_video")
 def switch_to_video(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
+    CURRENT_STATE["youtube_url"] = ""
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.get("/admin/clear_stage")
+def clear_stage(username: str = Depends(verify_admin)):
+    CURRENT_STATE["media_type"] = "none"
+    CURRENT_STATE["active_song"] = ""
     CURRENT_STATE["youtube_url"] = ""
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
@@ -428,7 +443,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. واجهة البث المباشر (التشغيل المتسلسل للفيديوهات + يوتيوب المخفي الأدوات) (/ticker) ---
+# --- 4. واجهة البث المباشر الموحد المتزامن ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -497,8 +512,8 @@ TICKER_HTML = """
             let match = url.match(regExp);
             let videoId = (match && match[2].length === 11) ? match[2] : null;
             if (!videoId) return "";
-            // رابط يوتيوب مع إخفاء كامل للشعارات وعناصر التحكم والعناوين
-            return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0`;
+            // إخفاء زر التشغيل الأوسط والشعارات نهائياً عبر بارامترات يوتيوب
+            return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0&iv_load_policy=3`;
         }
 
         function syncAudioSync(serverTime, activeSongSetting) {
@@ -559,13 +574,11 @@ TICKER_HTML = """
                     currentSongPath = "";
                 } 
                 else if(state.media_type === 'video') {
-                    // التشغيل المتسلسل للفيديوهات (Playlist) تتابعياً بناءً على الوقت العام للخادم لتتزامن عند الجميع
                     if(videoList.length > 0) {
-                        let totalDurationPerVideo = 60; // تقدير وسطي لطول الفيديو الواحد بالثواني ليتم الانتقال بسلاسة
+                        let totalDurationPerVideo = 60;
                         let totalPlaylistTime = serverTime % (videoList.length * totalDurationPerVideo);
                         let currentVidIndex = Math.floor(totalPlaylistTime / totalDurationPerVideo);
                         let targetVideoFile = videoList[currentVidIndex];
-                        let videoOffset = totalPlaylistTime % totalDurationPerVideo;
 
                         let vidEl = document.getElementById('live-video');
                         if(!vidEl || vidEl.getAttribute('data-src') !== targetVideoFile) {
@@ -573,17 +586,21 @@ TICKER_HTML = """
                             lastMediaType = 'video';
                             vidEl = document.getElementById('live-video');
                         }
-                        if (vidEl) {
-                            if (vidEl.ended) {
-                                currentVidIndex = (currentVidIndex + 1) % videoList.length;
-                                vidEl.src = videoList[currentVidIndex];
-                                vidEl.play().catch(()=>{});
+                        if (vidEl && vidEl.duration) {
+                            let targetVideoTime = totalPlaylistTime % totalDurationPerVideo;
+                            if (Math.abs(vidEl.currentTime - targetVideoTime) > 1.5) {
+                                vidEl.currentTime = targetVideoTime;
                             }
                         }
                     }
                     audioPlayer.pause();
                     currentSongPath = "";
                 } 
+                else if(state.media_type === 'none') {
+                    stage.innerHTML = `<div class="image-card" style="background:#000;"></div>`;
+                    audioPlayer.pause();
+                    currentSongPath = "";
+                }
                 else {
                     if(!document.getElementById('main-image') || lastMediaType !== 'image') {
                         stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
@@ -637,7 +654,7 @@ def get_ticker():
 def get_approved_news():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 40")
+    cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 50")
     rows = cursor.fetchall()
     conn.close()
     return [{"title": r[0], "category": r[1]} for r in rows]
@@ -803,7 +820,7 @@ PORTAL_MAIN_HTML = """
         <div class="nav-links">
             <a href="/news?lang=ar" class="{% if current_lang == 'ar' %}active{% endif %}">العربية</a>
             <a href="/news?lang=en" class="{% if current_lang == 'en' %}active{% endif %}">English</a>
-            <a href="/news?lang=he" class="{% if current_lang == 'en' %}active{% endif %}">עברית</a>
+            <a href="/news?lang=he" class="{% if current_lang == 'he' %}active{% endif %}">עברית</a>
             <a href="/ticker" class="live-btn" target="_blank">🔴 البث المباشر</a>
         </div>
     </header>
