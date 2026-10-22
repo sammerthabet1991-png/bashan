@@ -32,6 +32,7 @@ CURRENT_STATE = {
     "media_type": "video",
     "active_song": "",
     "active_video": default_vid_file,
+    "youtube_url": "",
     "breaking_banner": "",
     "sweida_speed": 90,
     "world_speed": 90
@@ -171,6 +172,12 @@ def get_songs():
         return [f"/music/{f}" for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))]
     return []
 
+@app.get("/api/get_videos")
+def get_videos():
+    if os.path.exists(VIDEOS_DIR):
+        return [f"/videos/{f}" for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))]
+    return []
+
 @app.get("/api/live_state")
 def get_live_state():
     state = CURRENT_STATE.copy()
@@ -210,7 +217,17 @@ ADMIN_HTML = """
             <div class="card" style="border: 2px solid #3b82f6;">
                 <h2 style="color: #60a5fa;">📺 وضع العرض على الشاشة</h2>
                 <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:48%; padding:10px;">عرض الصور 🖼️</button></a>
-                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:48%; padding:10px;">عرض الفيديو 🎬</button></a>
+                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:48%; padding:10px;">عرض الفيديوهات 🎬</button></a>
+            </div>
+
+            <!-- ميزة عرض فيديو يوتيوب بدون أي آثار أو شعارات -->
+            <div class="card" style="border: 2px solid #ff0000;">
+                <h2 style="color: #ff4444;">▶️ عرض فيديو يوتيوب مخفي الأدوات</h2>
+                <form action="/set_youtube_video" method="post">
+                    <label>ضع رابط يوتيوب هنا:</label>
+                    <input type="text" name="youtube_url" placeholder="https://www.youtube.com/watch?v=XXXXX" required>
+                    <button type="submit" class="btn" style="background:#ff0000; color:#fff; width:100%;">عرض يوتيوب مباشر 🚀</button>
+                </form>
             </div>
 
             <div class="card" style="border: 2px solid #7b1fa2;">
@@ -238,12 +255,12 @@ ADMIN_HTML = """
             </div>
 
             <div class="card">
-                <h2>🎬 اختيار فيديو البث المباشر</h2>
+                <h2>🎬 اختيار الفيديو المبدئي للبث</h2>
                 <form action="/set_active_video" method="post">
                     <select name="video_name" required>
                         {% for vid in video_files %}<option value="{{ vid }}">{{ vid }}</option>{% endfor %}
                     </select><br>
-                    <button type="submit" class="btn btn-approve" style="width:100%;">تغيير وعرض الفيديو</button>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تحديد الفيديو الأساسي</button>
                 </form>
             </div>
 
@@ -347,11 +364,19 @@ def approve_news(news_id: int, username: str = Depends(verify_admin)):
 @app.get("/switch_to_images")
 def switch_to_images(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "image"
+    CURRENT_STATE["youtube_url"] = ""
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.get("/switch_to_video")
 def switch_to_video(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
+    CURRENT_STATE["youtube_url"] = ""
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.post("/set_youtube_video")
+def set_youtube_video(youtube_url: str = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["media_type"] = "youtube"
+    CURRENT_STATE["youtube_url"] = youtube_url.strip()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_sweida_speed")
@@ -377,6 +402,7 @@ def clear_breaking_banner(username: str = Depends(verify_admin)):
 @app.post("/set_active_video")
 def set_active_video(video_name: str = Form(...), username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
+    CURRENT_STATE["youtube_url"] = ""
     CURRENT_STATE["active_video"] = f"/videos/{video_name}"
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
@@ -402,7 +428,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. واجهة البث المباشر (تزامن تام بالثانية للصوت والفيديو والشرائط) (/ticker) ---
+# --- 4. واجهة البث المباشر (التشغيل المتسلسل للفيديوهات + يوتيوب المخفي الأدوات) (/ticker) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -419,6 +445,7 @@ TICKER_HTML = """
         .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; box-sizing: border-box; padding: 15px; }
         .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; transition: background-image 1.2s ease-in-out; position: relative; }
         video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); object-fit: contain; background-color: #000; pointer-events: none; }
+        .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-color: #000; pointer-events: none; }
         .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; }
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
@@ -441,10 +468,10 @@ TICKER_HTML = """
     <div class="breaking-banner" id="breaking-banner"><span>🔴 عاجل: </span><span id="breaking-text"></span></div>
     <div class="ticker-container">
         <div class="ticker-title">أخبار عالمية</div>
-        <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">Jجاري التحميل...</div></div>
+        <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], currentSongPath = "", isAudioUnlocked = false;
+        let imageList = [], songList = [], videoList = [], currentSongPath = "", isAudioUnlocked = false, lastMediaType = "";
         const audioPlayer = document.getElementById('audio-player');
 
         function unlockAudio() {
@@ -461,18 +488,24 @@ TICKER_HTML = """
             try {
                 imageList = await (await fetch('/api/get_images')).json();
                 songList = await (await fetch('/api/get_songs')).json();
+                videoList = await (await fetch('/api/get_videos')).json();
             } catch(e){}
         }
 
-        // دالة مزامنة الصوت بناءً على توقيت الخادم الموحد
+        function getYoutubeEmbedUrl(url) {
+            let regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            let match = url.match(regExp);
+            let videoId = (match && match[2].length === 11) ? match[2] : null;
+            if (!videoId) return "";
+            // رابط يوتيوب مع إخفاء كامل للشعارات وعناصر التحكم والعناوين
+            return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0`;
+        }
+
         function syncAudioSync(serverTime, activeSongSetting) {
             if (songList.length === 0) return;
-            
             let targetSongUrl = "";
             let songOffset = 0;
-
             if (activeSongSetting === "AUTO_PLAYLIST") {
-                // حساب الأغنية الحالية والوقت المنقضي بدقة بناءً على سرعة الخادم وتتابع الأغاني (افتراض 200 ثانية لكل أغنية كمتوسط)
                 const songDuration = 200;
                 let totalPlaylistDuration = songList.length * songDuration;
                 let playlistTime = serverTime % totalPlaylistDuration;
@@ -481,17 +514,14 @@ TICKER_HTML = """
                 targetSongUrl = songList[songIndex];
             } else {
                 targetSongUrl = activeSongSetting;
-                // إذا كانت أغنية واحدة محددة، تتم مزامنة الوقت المنقضي عليها
                 songOffset = serverTime % (audioPlayer.duration || 200);
             }
-
             if (currentSongPath !== targetSongUrl) {
                 currentSongPath = targetSongUrl;
                 audioPlayer.src = targetSongUrl;
                 audioPlayer.currentTime = songOffset;
                 audioPlayer.play().then(() => { audioPlayer.muted = false; }).catch(() => {});
             } else {
-                // تصحيح فوري لأي فرق زمني أكبر من ثانية واحدة عن السيرفر
                 if (Math.abs(audioPlayer.currentTime - songOffset) > 1.2) {
                     audioPlayer.currentTime = songOffset;
                 }
@@ -507,7 +537,6 @@ TICKER_HTML = """
                 const state = await response.json();
                 const serverTime = state.server_time || (Date.now() / 1000);
                 
-                // مزامنة حركة الشرائط تماماً
                 document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
                 document.getElementById('top-ticker-content').style.animationDelay = `-${serverTime % state.sweida_speed}s`;
                 document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
@@ -517,29 +546,53 @@ TICKER_HTML = """
                 if(state.breaking_banner) { document.getElementById('breaking-text').innerText = state.breaking_banner; banner.style.display = 'flex'; } else { banner.style.display = 'none'; }
                 
                 const stage = document.getElementById('stage-container');
-                if(state.media_type === 'video') {
-                    if(!document.getElementById('live-video') || document.getElementById('live-video').getAttribute('data-src') !== state.active_video) {
-                        stage.innerHTML = `<video id="live-video" class="video-card" data-src="${state.active_video}" src="${state.active_video}" autoplay loop playsinline></video>`;
-                    }
-                    const vidEl = document.getElementById('live-video');
-                    if (vidEl && vidEl.duration) {
-                        let targetVideoTime = serverTime % vidEl.duration;
-                        // مزامنة زمن الفيديو بالثانية تماماً مع كل المشاهدين
-                        if (Math.abs(vidEl.currentTime - targetVideoTime) > 1.0) {
-                            vidEl.currentTime = targetVideoTime;
+                
+                if(state.media_type === 'youtube' && state.youtube_url) {
+                    let embedUrl = getYoutubeEmbedUrl(state.youtube_url);
+                    if(embedUrl) {
+                        if(lastMediaType !== 'youtube' || !document.getElementById('youtube-frame')) {
+                            stage.innerHTML = `<iframe id="youtube-frame" class="youtube-card" src="${embedUrl}" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+                            lastMediaType = 'youtube';
                         }
                     }
                     audioPlayer.pause();
                     currentSongPath = "";
-                } else {
-                    if(!document.getElementById('main-image')) {
+                } 
+                else if(state.media_type === 'video') {
+                    // التشغيل المتسلسل للفيديوهات (Playlist) تتابعياً بناءً على الوقت العام للخادم لتتزامن عند الجميع
+                    if(videoList.length > 0) {
+                        let totalDurationPerVideo = 60; // تقدير وسطي لطول الفيديو الواحد بالثواني ليتم الانتقال بسلاسة
+                        let totalPlaylistTime = serverTime % (videoList.length * totalDurationPerVideo);
+                        let currentVidIndex = Math.floor(totalPlaylistTime / totalDurationPerVideo);
+                        let targetVideoFile = videoList[currentVidIndex];
+                        let videoOffset = totalPlaylistTime % totalDurationPerVideo;
+
+                        let vidEl = document.getElementById('live-video');
+                        if(!vidEl || vidEl.getAttribute('data-src') !== targetVideoFile) {
+                            stage.innerHTML = `<video id="live-video" class="video-card" data-src="${targetVideoFile}" src="${targetVideoFile}" autoplay playsinline></video>`;
+                            lastMediaType = 'video';
+                            vidEl = document.getElementById('live-video');
+                        }
+                        if (vidEl) {
+                            if (vidEl.ended) {
+                                currentVidIndex = (currentVidIndex + 1) % videoList.length;
+                                vidEl.src = videoList[currentVidIndex];
+                                vidEl.play().catch(()=>{});
+                            }
+                        }
+                    }
+                    audioPlayer.pause();
+                    currentSongPath = "";
+                } 
+                else {
+                    if(!document.getElementById('main-image') || lastMediaType !== 'image') {
                         stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
+                        lastMediaType = 'image';
                     }
                     if(imageList.length > 0) {
                         const idx = Math.floor(serverTime / 6) % imageList.length;
                         document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
                     }
-                    
                     if(state.active_song) {
                         syncAudioSync(serverTime, state.active_song);
                     } else {
@@ -569,7 +622,7 @@ TICKER_HTML = """
         }
 
         loadAssets(); checkLiveState(); updateTickers();
-        setInterval(checkLiveState, 400); // تدقيق مستمر للمزامنة بالمللي ثانية
+        setInterval(checkLiveState, 400);
         setInterval(updateTickers, 10000);
     </script>
 </body>
@@ -750,7 +803,7 @@ PORTAL_MAIN_HTML = """
         <div class="nav-links">
             <a href="/news?lang=ar" class="{% if current_lang == 'ar' %}active{% endif %}">العربية</a>
             <a href="/news?lang=en" class="{% if current_lang == 'en' %}active{% endif %}">English</a>
-            <a href="/news?lang=he" class="{% if current_lang == 'he' %}active{% endif %}">עבריت</a>
+            <a href="/news?lang=he" class="{% if current_lang == 'en' %}active{% endif %}">עברית</a>
             <a href="/ticker" class="live-btn" target="_blank">🔴 البث المباشر</a>
         </div>
     </header>
