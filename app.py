@@ -751,7 +751,7 @@ TICKER_HTML = """
         <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", lastActiveVideo = "";
+        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", currentVideoIdx = 0;
         const audioPlayer = document.getElementById('audio-player');
 
         function enableAudioAndPlay() {
@@ -841,25 +841,28 @@ TICKER_HTML = """
                     currentSongPath = "";
                 } 
                 else if(state.media_type === 'video') {
-                    if (state.active_video) {
-                        let targetVid = state.active_video;
+                    if (videoList.length > 0) {
                         let vidEl = document.getElementById('live-video');
                         
-                        if(!vidEl || lastMediaType !== 'video' || lastActiveVideo !== targetVid) {
-                            stage.innerHTML = `<video id="live-video" class="video-card" src="${targetVid}" autoplay playsinline muted loop></video>`;
+                        if (!vidEl || lastMediaType !== 'video') {
+                            // حساب أي فيديو يجب تشغيله بناءً على وقت السيرفر لضمان المزامنة بين المشاهدين
+                            let totalDur = videoList.length * 60; // افتراض مبدئي 60 ثانية لكل فيديو كمرجع زمني
+                            let timeInCycle = serverTime % totalDur;
+                            let calculatedIdx = Math.floor(timeInCycle / 60) % videoList.length;
+                            currentVideoIdx = calculatedIdx;
+
+                            stage.innerHTML = `<video id="live-video" class="video-card" src="${videoList[currentVideoIdx]}" autoplay playsinline></video>`;
                             lastMediaType = 'video';
-                            lastActiveVideo = targetVid;
                             vidEl = document.getElementById('live-video');
+                            
+                            vidEl.onended = () => {
+                                currentVideoIdx = (currentVideoIdx + 1) % videoList.length;
+                                vidEl.src = videoList[currentVideoIdx];
+                                vidEl.play().catch(()=>{});
+                            };
                         }
                         
                         if (vidEl) {
-                            let videoOffset = serverTime % (vidEl.duration || 60);
-                            if (isNaN(vidEl.duration) || vidEl.duration === 0) {
-                                videoOffset = 0;
-                            }
-                            if (Math.abs(vidEl.currentTime - videoOffset) > 1.5) {
-                                vidEl.currentTime = videoOffset;
-                            }
                             if (vidEl.paused) {
                                 vidEl.play().catch(()=>{});
                             }
