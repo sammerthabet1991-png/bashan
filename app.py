@@ -64,6 +64,18 @@ def init_dbs():
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
+        # Migrate older installations safely: CREATE TABLE IF NOT EXISTS does not add columns.
+        news_columns = {row[1] for row in cursor.execute("PRAGMA table_info(news)").fetchall()}
+        for column, definition in [
+            ("category", "TEXT"),
+            ("source_name", "TEXT"),
+            ("status", "TEXT DEFAULT 'pending'"),
+            ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ]:
+            if column not in news_columns:
+                cursor.execute(f"ALTER TABLE news ADD COLUMN {column} {definition}")
+        # Restore legacy manually-entered Suwayda headlines to the manual/top ticker.
+        cursor.execute("UPDATE news SET source_name = 'لوحة البث', status = 'approved' WHERE (source_name IS NULL OR TRIM(source_name) = '' OR LOWER(source_name) IN ('يدوي','manual','manual entry','السويداء')) AND LOWER(TRIM(COALESCE(category,''))) IN ('السويداء','أخبار السويداء','محلي','محلية')")
         # RSS sources for the bottom ticker only. Every fetched headline is pending
         # until the admin approves it. Google News RSS is used for outlets without
         # a reliably available public RSS endpoint (e.g. Reuters / i24NEWS).
@@ -131,8 +143,8 @@ def fetch_portal_news():
                     cursor.execute("SELECT id FROM news WHERE title = ?", (title,))
                     if not cursor.fetchone():
                         cursor.execute("INSERT INTO news (title, category, source_name, status) VALUES (?, ?, ?, 'pending')", (title, category, name))
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"RSS fetch failed for {name} ({url}): {exc}")
         conn.commit()
         conn.close()
 
@@ -157,8 +169,8 @@ def fetch_portal_news():
                 pass
         conn_p.commit()
         conn_p.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"News/RSS fetch cycle failed: {exc}")
 
 app = FastAPI(title="BASHAN SYSTEM")
 app.mount("/music", StaticFiles(directory=UPLOAD_DIR), name="music")
@@ -514,7 +526,7 @@ EDIT_NEWS_HTML = """
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name = 'لوحة البث' ORDER BY id DESC LIMIT 50")
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name = 'لوحة البث' OR ((source_name IS NULL OR TRIM(source_name) = '' OR LOWER(source_name) IN ('يدوي','manual','manual entry','السويداء')) AND LOWER(TRIM(COALESCE(category,''))) IN ('السويداء','أخبار السويداء','محلي','محلية')) ORDER BY id DESC LIMIT 50")
     sweida_news = cursor.fetchall()
     cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name IS NOT NULL AND source_name <> 'لوحة البث' ORDER BY id DESC LIMIT 100")
     world_news = cursor.fetchall()
@@ -1313,10 +1325,10 @@ def get_approved_news():
     try:
         cursor = conn.cursor()
         # Only manually entered headlines can appear in the top ticker.
-        cursor.execute("SELECT title, category, source_name FROM news WHERE lower(trim(status)) = 'approved' AND source_name = 'لوحة البث' ORDER BY id DESC LIMIT 80")
+        cursor.execute("SELECT title, category, source_name FROM news WHERE lower(trim(status)) = 'approved' AND (source_name = 'لوحة البث' OR ((source_name IS NULL OR TRIM(source_name) = '' OR LOWER(source_name) IN ('يدوي','manual','manual entry','السويداء')) AND LOWER(TRIM(COALESCE(category,''))) IN ('السويداء','أخبار السويداء','محلي','محلية'))) ORDER BY id DESC LIMIT 80")
         for title, category, source_name in cursor.fetchall():
             if title and str(title).strip():
-                top_items.append({"title": str(title).strip(), "category": str(category or "السويداء").strip(), "source_name": source_name})
+                top_items.append({"title": str(title).strip(), "category": str(category or "السويداء").strip(), "source_name": "لوحة البث"})
         # Only approved automatically fetched source items can appear in the bottom ticker.
         cursor.execute("SELECT title, category, source_name FROM news WHERE lower(trim(status)) = 'approved' AND source_name IS NOT NULL AND source_name <> 'لوحة البث' ORDER BY id DESC LIMIT 150")
         for title, category, source_name in cursor.fetchall():
