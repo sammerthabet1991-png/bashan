@@ -11,6 +11,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from jinja2 import Template
 import uvicorn
 
+# --- 1. إعداد قواعد البيانات والمجلدات ---
 DB_NAME = "bashan_radio.db"
 DB_PORTAL = "bashan_portal.db"
 UPLOAD_DIR = "music_library"
@@ -37,6 +38,7 @@ CURRENT_STATE = {
     "world_speed": 90
 }
 
+# --- 2. إعدادات الحماية ---
 security = HTTPBasic()
 ADMIN_USER = "admin"
 ADMIN_PASS = "Bashan2026!"
@@ -92,7 +94,8 @@ def init_dbs():
         )''')
         default_portal_sources = [
             ("BBC Arabic", "https://feeds.bbci.co.uk/arabic/rss.xml", "عالمي", "ar"),
-            ("Reuters World", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي", "en")
+            ("Reuters World", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي", "en"),
+            ("i24NEWS", "https://www.i24news.tv/en/rss", "عالمي", "en")
         ]
         cursor_p.executemany("INSERT OR IGNORE INTO portal_sources (name, url, category, language) VALUES (?, ?, ?, ?)", default_portal_sources)
         conn_p.commit()
@@ -181,7 +184,7 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث والأخبار المباشرة (/admin) ---
+# --- 3. لوحة تحكم البث المباشر (الشرايط المفصولة + التعديل) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -204,7 +207,7 @@ ADMIN_HTML = """
     </style>
 </head>
 <body>
-    <h1>BASHAN LINE — لوحة تحكم البث المباشر والأخبار 🔒</h1>
+    <h1>BASHAN LINE — لوحة تحكم البث المباشر 🔒</h1>
     <div style="margin-bottom: 15px;">
         <a href="/news/admin" style="background: #7b1fa2; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">📰 الانتقال إلى لوحة تحكم الموقع الإخباري</a>
         <a href="/admin/approve_all" style="background: #2e7d32; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block; margin-right: 10px;">اعتماد كافة الأخبار المعلقة ✓✓</a>
@@ -213,8 +216,8 @@ ADMIN_HTML = """
         <div>
             <div class="card" style="border: 2px solid #3b82f6;">
                 <h2 style="color: #60a5fa;">📺 وضع العرض على الشاشة</h2>
-                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:32%; padding:10px;">عرض الصور 🖼️</button></a>
-                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:32%; padding:10px;">الفيديوهات 🎬</button></a>
+                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:31%; padding:10px;">عرض الصور والموسيقى 🖼️</button></a>
+                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:31%; padding:10px;">الفيديوهات 🎬</button></a>
                 <a href="/admin/clear_stage"><button class="btn" style="background:#c62828; color:#fff; width:30%; padding:10px;">إيقاف ❌</button></a>
             </div>
 
@@ -237,6 +240,41 @@ ADMIN_HTML = """
                     <button type="submit" class="btn btn-approve" style="width:100%;">تفعيل الموسيقى</button>
                 </form>
             </div>
+
+            <div class="card" style="border: 2px solid #7b1fa2;">
+                <h2 style="color: #ab47bc;">🟣 سرعة شريط السويداء (العلوي)</h2>
+                <form action="/set_sweida_speed" method="post">
+                    <select name="sweida_speed">
+                        <option value="160" {% if sweida_speed == 160 %}selected{% endif %}>بطيء جداً (160 ثانية)</option>
+                        <option value="120" {% if sweida_speed == 120 %}selected{% endif %}>بطيء (120 ثانية)</option>
+                        <option value="90" {% if sweida_speed == 90 %}selected{% endif %}>مريح - افتراضي (90 ثانية)</option>
+                        <option value="60" {% if sweida_speed == 60 %}selected{% endif %}>سريع (60 ثانية)</option>
+                    </select><br>
+                    <button type="submit" class="btn" style="background:#7b1fa2; color:#fff; width:100%;">تعديل سرعة الشريط العلوي</button>
+                </form>
+            </div>
+
+            <div class="card" style="border: 2px solid #d4af37;">
+                <h2 style="color: #d4af37;">⚡ سرعة شريط الأحداث العالمية (السفلي)</h2>
+                <form action="/set_world_speed" method="post">
+                    <select name="world_speed">
+                        <option value="160" {% if world_speed == 160 %}selected{% endif %}>بطيء جداً (160 ثانية)</option>
+                        <option value="120" {% if world_speed == 120 %}selected{% endif %}>بطيء (120 ثانية)</option>
+                        <option value="90" {% if world_speed == 90 %}selected{% endif %}>مريح - افتراضي (90 ثانية)</option>
+                        <option value="60" {% if world_speed == 60 %}selected{% endif %}>سريع (60 ثانية)</option>
+                    </select><br>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تعديل سرعة الشريط السفلي</button>
+                </form>
+            </div>
+            
+            <div class="card" style="border: 2px solid #c62828;">
+                <h2 style="color: #ff5252;">🚨 نشر خبر عاجل بارز</h2>
+                <form action="/set_breaking_banner" method="post">
+                    <textarea name="banner_text" rows="2" placeholder="اكتب العنوان العاجل..." required></textarea><br>
+                    <button type="submit" class="btn" style="background:#c62828; color:#fff; width:100%;">عرض الخبر 🔴</button>
+                </form>
+                {% if current_banner %}<br><a href="/clear_breaking_banner"><button class="btn btn-reject" style="width:100%; margin-top:5px;">إلغاء الخبر العاجل</button></a>{% endif %}
+            </div>
         </div>
 
         <div>
@@ -252,13 +290,34 @@ ADMIN_HTML = """
                 </form>
             </div>
 
-            <div class="card">
-                <h2>إدارة أخبار الشريطين (مع الاعتماد والتعديل)</h2>
+            <!-- قسم مستقل للشريط العلوي (السويداء) -->
+            <div class="card" style="border: 2px solid #7b1fa2;">
+                <h2 style="color: #ab47bc;">🟣 إدارة شريط السويداء (العلوي)</h2>
                 <table>
-                    <tr><th>التصنيف</th><th>الخبر</th><th>الحالة</th><th>الإجراءات</th></tr>
-                    {% for item in news %}
+                    <tr><th>الخبر</th><th>الحالة</th><th>الإجراءات</th></tr>
+                    {% for item in sweida_news %}
                     <tr>
-                        <td><span style="color:{% if item[2] == 'السويداء' %}#ab47bc{% else %}#d4af37{% endif %}; font-weight:bold;">{{ item[2] }}</span></td>
+                        <td>{{ item[1] }}</td>
+                        <td>{% if item[4] == 'approved' %}<span style="color:#4ade80;">معتمد</span>{% else %}<span style="color:#f59e0b;">معلق</span>{% endif %}</td>
+                        <td style="white-space:nowrap;">
+                            {% if item[4] == 'pending' %}
+                            <a href="/approve/{{ item[0] }}"><button class="btn btn-approve" style="padding:3px 6px;">اعتماد</button></a>
+                            {% endif %}
+                            <a href="/admin/edit_news/{{ item[0] }}"><button class="btn btn-edit" style="padding:3px 6px;">تعديل</button></a>
+                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:3px 6px;">حذف</button></a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- قسم مستقل للشريط السفلي (العالمي) -->
+            <div class="card" style="border: 2px solid #d4af37;">
+                <h2 style="color: #d4af37;">⚡ إدارة الشريط العالمي (السفلي)</h2>
+                <table>
+                    <tr><th>الخبر</th><th>الحالة</th><th>الإجراءات</th></tr>
+                    {% for item in world_news %}
+                    <tr>
                         <td>{{ item[1] }}</td>
                         <td>{% if item[4] == 'approved' %}<span style="color:#4ade80;">معتمد</span>{% else %}<span style="color:#f59e0b;">معلق</span>{% endif %}</td>
                         <td style="white-space:nowrap;">
@@ -312,14 +371,16 @@ EDIT_NEWS_HTML = """
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category, source_name, status FROM news ORDER BY id DESC LIMIT 50")
-    news = cursor.fetchall()
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE category = 'السويداء' ORDER BY id DESC LIMIT 30")
+    sweida_news = cursor.fetchall()
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE category = 'عالمي' ORDER BY id DESC LIMIT 30")
+    world_news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
     return Template(ADMIN_HTML).render(
-        news=news, music_files=music_files,
+        sweida_news=sweida_news, world_news=world_news, music_files=music_files,
         sweida_speed=CURRENT_STATE["sweida_speed"], world_speed=CURRENT_STATE["world_speed"],
-        current_youtube=CURRENT_STATE["youtube_url"]
+        current_youtube=CURRENT_STATE["youtube_url"], current_banner=CURRENT_STATE["breaking_banner"]
     )
 
 @app.get("/admin/edit_news/{news_id}", response_class=HTMLResponse)
@@ -386,6 +447,11 @@ def switch_to_video(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
+@app.get("/admin/clear_stage")
+def clear_stage(username: str = Depends(verify_admin)):
+    CURRENT_STATE["media_type"] = "none"
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
 @app.post("/set_youtube_video")
 def set_youtube_video(youtube_url: str = Form(...), username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "youtube"
@@ -398,14 +464,34 @@ def set_active_song(song_name: str = Form(None), username: str = Depends(verify_
     CURRENT_STATE["active_song"] = "AUTO_PLAYLIST" if song_name == "AUTO_PLAYLIST" else (f"/music/{song_name}" if song_name else "")
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
+@app.post("/set_sweida_speed")
+def set_sweida_speed(sweida_speed: int = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["sweida_speed"] = sweida_speed
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- 4. لوحة تحكم الموقع الإخباري والمقالات (/news/admin) ---
+@app.post("/set_world_speed")
+def set_world_speed(world_speed: int = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["world_speed"] = world_speed
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.post("/set_breaking_banner")
+def set_breaking_banner(banner_text: str = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["breaking_banner"] = banner_text
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.get("/clear_breaking_banner")
+def clear_breaking_banner(username: str = Depends(verify_admin)):
+    CURRENT_STATE["breaking_banner"] = ""
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+
+# --- 4. لوحة تحكم الموقع الإخباري باللغات الثلاث (/news/admin) ---
 ADMIN_PORTAL_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
-    <title>BASHAN - لوحة تحكم الموقع الإخباري</title>
+    <title>BASHAN - لوحة تحكم الأخبار متعددة اللغات</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #080b14; color: #eaeaea; margin: 0; padding: 20px; }
         h1 { color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px; }
@@ -427,18 +513,24 @@ ADMIN_PORTAL_HTML = """
         <a href="/admin" class="btn-back">⬅ العودة إلى لوحة تحكم البث المباشر</a>
         <a href="/news" target="_blank" style="color: #60a5fa; font-weight: bold; margin-right: 15px;">معاينة الموقع الإخباري ↗</a>
     </div>
+    
     <div class="grid">
         <div class="card">
-            <h2>✍️ إضافة مقال للموقع</h2>
+            <h2 style="color: #d4af37;">✍️ إضافة خبر للموقع باللغات الثلاث</h2>
             <form action="/news/admin/add" method="post">
                 <label>التصنيف:</label>
                 <select name="category">
                     <option value="عاجل">عاجل</option>
                     <option value="حدث اليوم">حدث اليوم</option>
+                    <option value="أخبار السويداء المحلية">أخبار السويداء المحلية</option>
+                    <option value="مقالات عامة">مقالات عامة</option>
+                    <option value="اقتصاد">اقتصاد</option>
                     <option value="عالمي">عالمي</option>
                 </select>
-                <label>العنوان:</label><input type="text" name="title_ar" required>
-                <label>المحتوى:</label><textarea name="content_ar" rows="3" required></textarea>
+                <label style="color:#d4af37;">🇸🇦 العنوان بالعربية:</label><input type="text" name="title_ar" required>
+                <label>المحتوى بالعربية:</label><textarea name="content_ar" rows="3" required></textarea>
+                <label>الإنجليزية:</label><input type="text" name="title_en"><textarea name="content_en" rows="2"></textarea>
+                <label>العبرية:</label><input type="text" name="title_he"><textarea name="content_he" rows="2"></textarea>
                 <label>الكاتب:</label><input type="text" name="author" value="فريق تحرير باشان" required>
                 <button type="submit" class="btn btn-approve" style="width:100%; padding:10px; margin-top:10px;">نشر للموقع 🚀</button>
             </form>
@@ -467,11 +559,11 @@ def portal_admin(username: str = Depends(verify_portal_admin)):
     return Template(ADMIN_PORTAL_HTML).render(articles=articles)
 
 @app.post("/news/admin/add")
-def portal_add_article(title_ar: str = Form(...), content_ar: str = Form(...), category: str = Form(...), author: str = Form(...), username: str = Depends(verify_portal_admin)):
+def portal_add_article(title_ar: str = Form(...), content_ar: str = Form(...), title_en: str = Form(""), content_en: str = Form(""), title_he: str = Form(""), content_he: str = Form(""), category: str = Form(...), author: str = Form(...), username: str = Depends(verify_portal_admin)):
     conn = sqlite3.connect(DB_PORTAL)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO articles (title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'خاص', ?, ?, 'approved')",
-                   (title_ar, content_ar, title_ar, content_ar, title_ar, content_ar, category, author, time.strftime('%Y-%m-%d %H:%M')))
+                   (title_ar, content_ar, title_en or title_ar, content_en or content_ar, title_he or title_ar, content_he or content_ar, category, author, time.strftime('%Y-%m-%d %H:%M')))
     conn.commit()
     conn.close()
     return HTMLResponse("<script>window.location.href='/news/admin';</script>")
@@ -485,18 +577,101 @@ def portal_delete_article(article_id: int, username: str = Depends(verify_portal
     conn.close()
     return HTMLResponse("<script>window.location.href='/news/admin';</script>")
 
+# --- 5. صفحة قراءة المقال المفصل (/news/read/{id}) ---
+PORTAL_READ_HTML = """
+<!DOCTYPE html>
+<html dir="{{ 'ltr' if lang == 'en' else 'rtl' }}" lang="{{ lang }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }} - BASHAN NEWS</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; padding: 0; }
+        header { background: #111827; border-bottom: 3px solid #d4af37; padding: 12px 40px; display: flex; justify-content: space-between; align-items: center; }
+        .container { max-width: 900px; margin: 40px auto; padding: 30px; background: #121824; border: 1px solid #1e293b; border-radius: 10px; }
+        h1 { color: #ffffff; font-size: 32px; margin: 20px 0; }
+        .content { font-size: 18px; line-height: 1.9; color: #d1d5db; white-space: pre-line; }
+        .back-btn { display: inline-block; margin-top: 35px; background: #d4af37; color: #000; padding: 10px 22px; border-radius: 6px; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <header><a href="/news?lang={{ lang }}" style="color: #d4af37; font-weight:900; text-decoration:none;">⚡ BASHAN NEWS</a></header>
+    <div class="container">
+        <h1>{{ title }}</h1>
+        <div class="content">{{ content }}</div>
+        <a href="/news?lang={{ lang }}" class="back-btn">← العودة إلى الأخبار الرئيسية</a>
+    </div>
+</body>
+</html>
+"""
+
+@app.get("/news/read/{article_id}", response_class=HTMLResponse)
+def read_article(article_id: int, lang: str = "ar"):
+    conn = sqlite3.connect(DB_PORTAL)
+    cursor = conn.cursor()
+    cursor.execute("SELECT title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at FROM articles WHERE id = ?", (article_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row: return HTMLResponse("المقال غير موجود", status_code=404)
+    title = row[2] if lang=="en" else (row[4] if lang=="he" else row[0])
+    content = row[3] if lang=="en" else (row[5] if lang=="he" else row[1])
+    return Template(PORTAL_READ_HTML).render(title=title, content=content, lang=lang)
+
+# --- 6. الموقع الإخباري الاحترافي للزوار (/news) ---
+PORTAL_MAIN_HTML = """
+<!DOCTYPE html>
+<html dir="{{ 'ltr' if current_lang == 'en' else 'rtl' }}" lang="{{ current_lang }}">
+<head>
+    <meta charset="UTF-8">
+    <title>BASHAN NEWS</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; padding: 0; }
+        header { background: #111827; border-bottom: 3px solid #d4af37; padding: 12px 40px; display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 26px; font-weight: 900; color: #d4af37; text-decoration: none; }
+        .nav-links a { color: #fff; text-decoration: none; padding: 7px 14px; background: #1f2937; border-radius: 4px; font-weight: bold; font-size: 13px; margin-left: 5px; }
+        .nav-links a.active { background: #d4af37; color: #000; }
+        .live-btn { background: #b91c1c !important; }
+        .container { max-width: 1280px; margin: 30px auto; padding: 0 20px; }
+        .grid-news { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 25px; }
+        .article-card { background: #121824; border: 1px solid #1e293b; border-radius: 8px; padding: 22px; }
+        .article-card h3 a { color: #f9fafb; text-decoration: none; font-size: 19px; }
+        .article-card h3 a:hover { color: #d4af37; }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="/news?lang={{ current_lang }}" class="logo">⚡ BASHAN NEWS</a>
+        <div class="nav-links">
+            <a href="/news?lang=ar" class="{% if current_lang == 'ar' %}active{% endif %}">العربية</a>
+            <a href="/news?lang=en" class="{% if current_lang == 'en' %}active{% endif %}">English</a>
+            <a href="/news?lang=he" class="{% if current_lang == 'he' %}active{% endif %}">עברית</a>
+            <a href="/ticker" class="live-btn" target="_blank">🔴 البث المباشر</a>
+        </div>
+    </header>
+    <div class="container">
+        <div class="grid-news">
+            {% for item in articles %}
+            <div class="article-card">
+                <h3><a href="/news/read/{{ item.id }}?lang={{ current_lang }}">{{ item.title }}</a></h3>
+                <p style="color:#9ca3af; font-size:14px;">{{ item.content[:160] }}...</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
+"""
+
 @app.get("/news", response_class=HTMLResponse)
 def portal_home(lang: str = "ar"):
     conn = sqlite3.connect(DB_PORTAL)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title_ar, content_ar, category, source_name, author, published_at FROM articles WHERE status = 'approved' ORDER BY id DESC")
+    cursor.execute("SELECT id, title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at FROM articles WHERE status = 'approved' ORDER BY id DESC")
     rows = cursor.fetchall()
     conn.close()
-    articles = [{"id": r[0], "title": r[1], "content": r[2]} for r in rows]
-    return HTMLResponse(f"<h1>موقع باشان الإخباري</h1><ul>" + "".join([f"<li>{a['title']}</li>" for a in articles]) + "</ul>")
+    articles = [{"id": r[0], "title": (r[3] if lang=="en" else (r[5] if lang=="he" else r[1])), "content": (r[4] if lang=="en" else (r[6] if lang=="he" else r[2]))} for r in rows]
+    return Template(PORTAL_MAIN_HTML).render(articles=articles, current_lang=lang)
 
-
-# --- 5. واجهة البث المباشر (الشاشة الرئيسية للزوار) ---
+# --- 7. واجهة البث المباشر الموحد المتزامن ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -512,7 +687,7 @@ TICKER_HTML = """
         .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; padding: 15px; box-sizing: border-box; }
         .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; }
-        video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; object-fit: contain; background-color: #000; }
+        video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); object-fit: contain; background-color: #000; }
         .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-color: #000; }
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
@@ -520,6 +695,7 @@ TICKER_HTML = """
         .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 17px; color: #ffffff; }
         .ticker-item { display: inline-block; padding: 0 20px; }
         #touch-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: transparent; cursor: pointer; }
+        .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
         @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(100%, 0, 0); } }
     </style>
 </head>
@@ -531,6 +707,7 @@ TICKER_HTML = """
         <div class="ticker-wrap"><div class="ticker-move" id="top-ticker-content">جاري التحميل...</div></div>
     </div>
     <div class="center-stage" id="stage-container"></div>
+    <div class="breaking-banner" id="breaking-banner"><span>🔴 عاجل: </span><span id="breaking-text"></span></div>
     <audio id="audio-player" preload="auto" style="display:none;"></audio>
     <div class="ticker-container">
         <div class="ticker-title">أخبار عالمية</div>
@@ -545,6 +722,8 @@ TICKER_HTML = """
             const iframe = document.getElementById('youtube-frame');
             if (iframe) { iframe.src = iframe.src; }
             if (audioPlayer.src) { audioPlayer.play().catch(()=>{}); }
+            const vid = document.getElementById('live-video');
+            if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
         }
 
         async function loadAssets() {
@@ -573,6 +752,31 @@ TICKER_HTML = """
             return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`;
         }
 
+        function syncAudio(serverTime, activeSongSetting) {
+            if (songList.length === 0) return;
+            let targetSongUrl = "";
+            let songOffset = 0;
+            if (activeSongSetting === "AUTO_PLAYLIST") {
+                const songDuration = 200;
+                let totalDuration = songList.length * songDuration;
+                let pTime = serverTime % totalDuration;
+                let sIdx = Math.floor(pTime / songDuration);
+                songOffset = pTime % songDuration;
+                targetSongUrl = songList[sIdx];
+            } else {
+                targetSongUrl = activeSongSetting;
+                songOffset = serverTime % (audioPlayer.duration || 200);
+            }
+            if (currentSongPath !== targetSongUrl) {
+                currentSongPath = targetSongUrl;
+                audioPlayer.src = targetSongUrl;
+                audioPlayer.currentTime = songOffset;
+                audioPlayer.play().catch(() => {});
+            } else if (Math.abs(audioPlayer.currentTime - songOffset) > 1.5) {
+                audioPlayer.currentTime = songOffset;
+            }
+        }
+
         async function checkLiveState() {
             try {
                 const response = await fetch('/api/live_state');
@@ -584,6 +788,9 @@ TICKER_HTML = """
                 document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
                 document.getElementById('ticker-content').style.animationDelay = `-${serverTime % state.world_speed}s`;
                 
+                const banner = document.getElementById('breaking-banner');
+                if(state.breaking_banner) { document.getElementById('breaking-text').innerText = state.breaking_banner; banner.style.display = 'flex'; } else { banner.style.display = 'none'; }
+                
                 const stage = document.getElementById('stage-container');
                 
                 if(state.media_type === 'youtube' && state.youtube_url) {
@@ -593,6 +800,8 @@ TICKER_HTML = """
                         lastMediaType = 'youtube';
                         lastYoutubeUrl = state.youtube_url;
                     }
+                    audioPlayer.pause();
+                    currentSongPath = "";
                 } 
                 else if(state.media_type === 'video') {
                     if(videoList.length > 0) {
@@ -606,6 +815,8 @@ TICKER_HTML = """
                             lastMediaType = 'video';
                         }
                     }
+                    audioPlayer.pause();
+                    currentSongPath = "";
                 } 
                 else {
                     if(lastMediaType !== 'image') {
@@ -615,6 +826,12 @@ TICKER_HTML = """
                     if(imageList.length > 0) {
                         const idx = Math.floor(serverTime / 6) % imageList.length;
                         document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
+                    }
+                    if(state.active_song) {
+                        syncAudio(serverTime, state.active_song);
+                    } else {
+                        audioPlayer.pause();
+                        currentSongPath = "";
                     }
                 }
             } catch(e){}
