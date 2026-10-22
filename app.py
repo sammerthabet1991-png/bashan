@@ -64,9 +64,12 @@ def init_dbs():
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
+        # Keep existing Sky News Arabia source updated and add an economy feed.
+        cursor.execute("UPDATE sources SET url = ? WHERE name = ?", ("https://www.skynewsarabia.com/rss.xml", "Sky News Arabia"))
         default_sources = [
-            ("Sky News Arabia", "https://www.skynewsarabia.com/web/rss", "عالمي"),
-            ("RT Arabic", "https://arabic.rt.com/rss/", "عالمي")
+            ("Sky News Arabia", "https://www.skynewsarabia.com/rss.xml", "عالمي"),
+            ("RT Arabic", "https://arabic.rt.com/rss/", "عالمي"),
+            ("Alikhbariya Economy", "https://alikhbariya.net/feeds/topics/economy.xml", "اقتصاد")
         ]
         cursor.executemany("INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)", default_sources)
         conn.commit()
@@ -95,8 +98,9 @@ def init_dbs():
             category TEXT,
             language TEXT DEFAULT 'ar'
         )''')
+        cursor_p.execute("UPDATE portal_sources SET url = ? WHERE name IN (?, ?)", ("https://www.skynewsarabia.com/rss.xml", "Sky News", "Sky News Arabia"))
         default_portal_sources = [
-            ("Sky News", "https://www.skynewsarabia.com/web/rss", "عالمي", "ar"),
+            ("Sky News Arabia", "https://www.skynewsarabia.com/rss.xml", "عالمي", "ar"),
             ("RT Arabic", "https://arabic.rt.com/rss/", "عالمي", "ar")
         ]
         cursor_p.executemany("INSERT OR IGNORE INTO portal_sources (name, url, category, language) VALUES (?, ?, ?, ?)", default_portal_sources)
@@ -158,7 +162,7 @@ def startup_event():
     init_dbs()
     fetch_portal_news()
     try:
-        scheduler.add_job(fetch_portal_news, 'interval', minutes=30)
+        scheduler.add_job(fetch_portal_news, 'interval', minutes=5)
         scheduler.start()
     except Exception:
         pass
@@ -908,7 +912,7 @@ TICKER_HTML = """
         .ticker-item { display: inline-block; padding: 0 20px; }
         #touch-overlay { position: fixed; bottom: 62px; left: 12px; width: auto; height: auto; z-index: 9999; background: rgba(0,0,0,.72); color: #fff; border: 1px solid #d4af37; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-size: 14px; }
         .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
-        @keyframes ticker-ltr { 0% { transform: translate3d(-50%, 0, 0); } 100% { transform: translate3d(0, 0, 0); } }
+        @keyframes ticker-ltr { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-50%, 0, 0); } }
     </style>
 </head>
 <body>
@@ -1218,40 +1222,76 @@ TICKER_HTML = """
             } catch(e){}
         }
 
-        async function updateTickers() {
-            try {
-                const news = await (await fetch('/api/approved_news')).json();
-                let s = '', w = '';
-                news.forEach(i => {
-                    if(i.category === 'السويداء') {
-                        s += `<div class="ticker-item">${i.title}</div> • `;
-                    } else {
-                        w += `<div class="ticker-item">${i.title}</div> • `;
-                    }
-                });
-                if(!s) s = `<div class="ticker-item">شبكة باشان الإعلامية</div> • `;
-                if(!w) w = `<div class="ticker-item">تغطية مستمرة عبر باشان</div> • `;
-                // Two identical copies create a continuous ticker with no long blank gap,
-                // including on narrow mobile screens.
-                const topEl = document.getElementById('top-ticker-content');
-                const bottomEl = document.getElementById('ticker-content');
-                const topMarkup = `<span class="ticker-copy">${s}</span><span class="ticker-copy" aria-hidden="true">${s}</span>`;
-                const bottomMarkup = `<span class="ticker-copy">${w}</span><span class="ticker-copy" aria-hidden="true">${w}</span>`;
-                if (topEl.dataset.tickerMarkup !== topMarkup) {
-                    topEl.innerHTML = topMarkup;
-                    topEl.dataset.tickerMarkup = topMarkup;
+        function renderTickerContent(news) {
+            let localItems = [], worldItems = [];
+            (Array.isArray(news) ? news : []).forEach(i => {
+                const title = String(i.title || '').trim();
+                if (!title) return;
+                const category = String(i.category || '').trim();
+                const itemMarkup = `<span class="ticker-item">${escapeTickerText(title)}</span><span class="ticker-separator"> • </span>`;
+                if (category.includes('السويداء') || category.includes('محلي')) localItems.push(itemMarkup);
+                else worldItems.push(itemMarkup);
+            });
+            if (!localItems.length) localItems = ['<span class="ticker-item">شبكة باشان الإعلامية — أخبار السويداء</span><span class="ticker-separator"> • </span>'];
+            if (!worldItems.length) worldItems = ['<span class="ticker-item">تغطية مستمرة عبر باشان — أخبار عربية ودولية واقتصادية</span><span class="ticker-separator"> • </span>'];
+
+            function buildSeamlessTrack(elementId, wrapSelector, items) {
+                const el = document.getElementById(elementId);
+                const wrap = el ? el.closest(wrapSelector) : null;
+                if (!el || !wrap) return;
+                const base = items.join('');
+                // Repeat the news within each half until it is wider than the viewport.
+                // This prevents an empty gap when there are only a few headlines.
+                const probe = document.createElement('span');
+                probe.className = 'ticker-copy';
+                probe.style.position = 'absolute';
+                probe.style.visibility = 'hidden';
+                probe.style.width = 'max-content';
+                probe.innerHTML = base;
+                wrap.appendChild(probe);
+                let oneCopy = base;
+                let count = 1;
+                while (probe.offsetWidth < wrap.clientWidth + 80 && count < 10) {
+                    count++;
+                    oneCopy += base;
+                    probe.innerHTML = oneCopy;
                 }
-                if (bottomEl.dataset.tickerMarkup !== bottomMarkup) {
-                    bottomEl.innerHTML = bottomMarkup;
-                    bottomEl.dataset.tickerMarkup = bottomMarkup;
-                }
-                const topSpeed = lastTickerSpeeds.top || 90;
-                const bottomSpeed = lastTickerSpeeds.bottom || 90;
-                applyTickerSpeed('top', topSpeed);
-                applyTickerSpeed('bottom', bottomSpeed);
-            } catch(e){}
+                probe.remove();
+                const markupKey = oneCopy;
+                // Do not touch the DOM or restart motion when headlines have not changed.
+                if (el.dataset.tickerMarkup === markupKey) return;
+                el.innerHTML = `<span class="ticker-copy">${oneCopy}</span><span class="ticker-copy" aria-hidden="true">${oneCopy}</span>`;
+                el.dataset.tickerMarkup = markupKey;
+                // Force a clean animation only when the actual headline set changes.
+                el.style.animation = 'none';
+                void el.offsetWidth;
+                el.style.animation = `ticker-ltr ${Math.max(30, Math.min(600, Number(el.dataset.tickerSpeed) || 90))}s linear infinite`;
+            }
+            buildSeamlessTrack('top-ticker-content', '.ticker-wrap', localItems);
+            buildSeamlessTrack('ticker-content', '.ticker-wrap', worldItems);
+            applyTickerSpeed('top', lastTickerSpeeds.top || 90);
+            applyTickerSpeed('bottom', lastTickerSpeeds.bottom || 90);
         }
 
+        function escapeTickerText(value) {
+            return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+        }
+
+        async function updateTickers() {
+            try {
+                const response = await fetch('/api/approved_news', {cache: 'no-store'});
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const news = await response.json();
+                renderTickerContent(news);
+            } catch (e) {
+                // Never leave the viewer seeing "جاري التحميل..." if the news API is unavailable.
+                renderTickerContent([]);
+                console.error('BASHAN ticker news error:', e);
+            }
+        }
+
+        // Render visible fallback immediately, then replace it when news loads.
+        renderTickerContent([]);
         loadAssets(); checkLiveState(); updateTickers();
         setInterval(checkLiveState, 400);
         setInterval(updateTickers, 10000);
@@ -1284,10 +1324,13 @@ def get_approved_news():
     conn = sqlite3.connect(DB_PORTAL)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT title_ar, category FROM articles WHERE lower(trim(status)) = 'approved' ORDER BY id DESC LIMIT 50")
-        for title, category in cursor.fetchall():
-            if title and str(title).strip():
-                items.append({"title": str(title).strip(), "category": str(category or "عالمي").strip()})
+        try:
+            cursor.execute("SELECT title_ar, category FROM articles WHERE lower(trim(status)) = 'approved' ORDER BY id DESC LIMIT 50")
+            for title, category in cursor.fetchall():
+                if title and str(title).strip():
+                    items.append({"title": str(title).strip(), "category": str(category or "عالمي").strip()})
+        except sqlite3.Error as exc:
+            print(f"Ticker portal DB query failed: {exc}")
     finally:
         conn.close()
 
