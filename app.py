@@ -191,7 +191,7 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث المباشر (الشرايط المفصولة + الفيديوهات + التعديل) ---
+# --- 3. لوحة تحكم البث المباشر (مع أزرار التحكم الخاصة بك) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -210,7 +210,7 @@ ADMIN_HTML = """
         .btn-approve { background: #2e7d32; color: white; }
         .btn-reject { background: #c62828; color: white; }
         .btn-fetch { background: #3b82f6; color: white; }
-        .btn-edit { background: #1d4ed8; color: white; text-decoration: none; display: inline-block; padding: 6px 12px; border-radius: 4px; }
+        .btn-control { background: #475569; color: white; padding: 8px 12px; margin: 4px 2px; }
         input, textarea, select { width: 100%; padding: 10px; background: #1a2332; color: #fff; border: 1px solid #2a364f; border-radius: 4px; box-sizing: border-box; margin-bottom: 10px; }
     </style>
 </head>
@@ -239,13 +239,29 @@ ADMIN_HTML = """
             </div>
 
             <div class="card" style="border: 2px solid #4ade80;">
-                <h2 style="color: #4ade80;">🎬 اختيار الفيديو المحلي للبث</h2>
+                <h2 style="color: #4ade80;">🎬 اختيار الفيديو المحلي والتحكم به</h2>
                 <form action="/set_active_video" method="post">
                     <select name="video_name" required>
                         {% for vid in video_files %}<option value="{{ vid }}" {% if current_video == '/videos/' + vid %}selected{% endif %}>{{ vid }}</option>{% endfor %}
                     </select><br>
-                    <button type="submit" class="btn btn-approve" style="width:100%;">تحديد وتشغيل الفيديو الأساسي</button>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تشغيل هذا الفيديو 🎬</button>
                 </form>
+                
+                <!-- أزرار التحكم الخاصة بك في لوحة الإدارة -->
+                <div style="margin-top: 15px; background: #1a2332; padding: 12px; border-radius: 6px; text-align: center;">
+                    <p style="color: #d4af37; margin-top: 0; font-weight: bold;">🎛️ لوحة تحكم الإدارة بالفيديو</p>
+                    <button class="btn btn-control" onclick="adminPlay()">تشغيل ▶</button>
+                    <button class="btn btn-control" onclick="adminPause()">إيقاف ⏸</button>
+                    <button class="btn btn-control" onclick="adminMuteToggle()">كتم/إلغاء الصوت 🔊</button><br>
+                    <button class="btn btn-control" onclick="adminSeek(-10)">⮜ رجوع 10ث</button>
+                    <button class="btn btn-control" onclick="adminSeek(10)">تقدم 10ث ⮞</button><br>
+                    <button class="btn btn-control" style="background:#1d4ed8;" onclick="adminPrevVideo()">⏮ الفيديو السابق</button>
+                    <button class="btn btn-control" style="background:#1d4ed8;" onclick="adminNextVideo()">الفيديو التالي ⏭</button>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <video id="admin-preview-video" src="{{ current_video }}" controls style="width:100%; max-height:220px; background:#000; border-radius:6px;"></video>
+                </div>
             </div>
 
             <div class="card" style="border: 2px solid #2e7d32;">
@@ -352,6 +368,29 @@ ADMIN_HTML = """
             </div>
         </div>
     </div>
+    <script>
+        const vidsList = [{% for vid in video_files %}"/videos/{{ vid }}",{% endfor %}];
+        const previewVid = document.getElementById('admin-preview-video');
+        
+        function adminPlay() { if(previewVid) previewVid.play(); }
+        function adminPause() { if(previewVid) previewVid.pause(); }
+        function adminMuteToggle() { if(previewVid) previewVid.muted = !previewVid.muted; }
+        function adminSeek(sec) { if(previewVid) previewVid.currentTime += sec; }
+        function adminNextVideo() {
+            if(vidsList.length === 0) return;
+            let curr = previewVid.getAttribute('src');
+            let idx = vidsList.indexOf(curr);
+            let nextIdx = (idx + 1) % vidsList.length;
+            window.location.href = "/set_active_video_direct?v=" + encodeURIComponent(vidsList[nextIdx]);
+        }
+        function adminPrevVideo() {
+            if(vidsList.length === 0) return;
+            let curr = previewVid.getAttribute('src');
+            let idx = vidsList.indexOf(curr);
+            let prevIdx = (idx - 1 + vidsList.length) % vidsList.length;
+            window.location.href = "/set_active_video_direct?v=" + encodeURIComponent(vidsList[prevIdx]);
+        }
+    </script>
 </body>
 </html>
 """
@@ -487,6 +526,12 @@ def set_youtube_video(youtube_url: str = Form(...), username: str = Depends(veri
 def set_active_video(video_name: str = Form(...), username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
     CURRENT_STATE["active_video"] = f"/videos/{video_name}"
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.get("/set_active_video_direct")
+def set_active_video_direct(v: str, username: str = Depends(verify_admin)):
+    CURRENT_STATE["media_type"] = "video"
+    CURRENT_STATE["active_video"] = v
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_active_song")
@@ -708,7 +753,7 @@ def portal_home(lang: str = "ar"):
     articles = [{"id": r[0], "title": (r[3] if lang=="en" else (r[5] if lang=="he" else r[1])), "content": (r[4] if lang=="en" else (r[6] if lang=="he" else r[2]))} for r in rows]
     return Template(PORTAL_MAIN_HTML).render(articles=articles, current_lang=lang)
 
-# --- 7. واجهة البث المباشر الحقيقي المتزامن (بدون تحكم المشاهدين) ---
+# --- 7. واجهة البث المباشر للمشاهدين (بدون أي أزرار تحكم ومقفل تماماً) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -725,7 +770,7 @@ TICKER_HTML = """
         .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; padding: 15px; box-sizing: border-box; }
         .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; }
         
-        /* إخفاء شريط التحكم ومنع أي تفاعل للمشاهد على الفيديو ليبدو كبث مباشر تلفزيوني حقيقي */
+        /* إخفاء تام لأي تحكم أو شريط للمشاهدين ليبدو كبث مباشر حقيقي */
         video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); object-fit: contain; background-color: #000; pointer-events: none; }
         
         .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-color: #000; pointer-events: none; }
@@ -754,7 +799,7 @@ TICKER_HTML = """
         <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "";
+        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", activeVideoUrl = "";
         const audioPlayer = document.getElementById('audio-player');
 
         function enableAudioAndPlay() {
@@ -844,26 +889,24 @@ TICKER_HTML = """
                     currentSongPath = "";
                 } 
                 else if(state.media_type === 'video') {
-                    if (videoList.length > 0) {
+                    if (state.active_video) {
+                        let targetVid = state.active_video;
                         let vidEl = document.getElementById('live-video');
                         
-                        // حساب الفيديو الحالي بدقة وفق وقت السيرفر ليكون البث متزامناً بالكامل عند الجميع
-                        let assumedVidDuration = 60; 
-                        let totalPlaylistDuration = videoList.length * assumedVidDuration;
-                        let globalCycleTime = serverTime % totalPlaylistDuration;
-                        let targetIdx = Math.floor(globalCycleTime / assumedVidDuration) % videoList.length;
-                        let targetVideoUrl = videoList[targetIdx];
-                        let exactVideoOffset = globalCycleTime % assumedVidDuration;
-
-                        if (!vidEl || lastMediaType !== 'video' || vidEl.getAttribute('data-active') !== targetVideoUrl) {
-                            stage.innerHTML = `<video id="live-video" class="video-card" data-active="${targetVideoUrl}" src="${targetVideoUrl}" autoplay playsinline muted></video>`;
+                        if (!vidEl || lastMediaType !== 'video' || activeVideoUrl !== targetVid) {
+                            stage.innerHTML = `<video id="live-video" class="video-card" src="${targetVid}" autoplay playsinline muted loop></video>`;
                             lastMediaType = 'video';
+                            activeVideoUrl = targetVid;
                             vidEl = document.getElementById('live-video');
                         }
-
+                        
                         if (vidEl) {
-                            if (Math.abs(vidEl.currentTime - exactVideoOffset) > 2.0) {
-                                vidEl.currentTime = exactVideoOffset;
+                            let videoOffset = serverTime % (vidEl.duration || 60);
+                            if (isNaN(vidEl.duration) || vidEl.duration === 0) {
+                                videoOffset = 0;
+                            }
+                            if (Math.abs(vidEl.currentTime - videoOffset) > 2.0) {
+                                vidEl.currentTime = videoOffset;
                             }
                             if (vidEl.paused) {
                                 vidEl.play().catch(()=>{});
