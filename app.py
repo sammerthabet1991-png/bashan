@@ -24,7 +24,7 @@ for directory in [UPLOAD_DIR, IMAGES_DIR, VIDEOS_DIR]:
 
 default_vid_file = ""
 if os.path.exists(VIDEOS_DIR):
-    vids = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))]
+    vids = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))]
     if vids:
         default_vid_file = f"/videos/{vids[0]}"
 
@@ -183,7 +183,7 @@ def get_songs():
 @app.get("/api/get_videos")
 def get_videos():
     if os.path.exists(VIDEOS_DIR):
-        return [f"/videos/{f}" for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))]
+        return [f"/videos/{f}" for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))]
     return []
 
 @app.get("/api/live_state")
@@ -309,10 +309,14 @@ ADMIN_HTML = """
                 <h2 style="color: #ab47bc;">🟣 سرعة شريط السويداء (العلوي)</h2>
                 <form action="/set_sweida_speed" method="post">
                     <select name="sweida_speed">
-                        <option value="160" {% if sweida_speed == 160 %}selected{% endif %}>بطيء جداً (160 ثانية)</option>
-                        <option value="120" {% if sweida_speed == 120 %}selected{% endif %}>بطيء (120 ثانية)</option>
-                        <option value="90" {% if sweida_speed == 90 %}selected{% endif %}>مريح - افتراضي (90 ثانية)</option>
+                        <option value="300" {% if sweida_speed == 300 %}selected{% endif %}>بطيء جداً (300 ثانية)</option>
+                        <option value="240" {% if sweida_speed == 240 %}selected{% endif %}>بطيء جداً (240 ثانية)</option>
+                        <option value="180" {% if sweida_speed == 180 %}selected{% endif %}>بطيء (180 ثانية)</option>
+                        <option value="160" {% if sweida_speed == 160 %}selected{% endif %}>أبطأ (160 ثانية)</option>
+                        <option value="120" {% if sweida_speed == 120 %}selected{% endif %}>مريح (120 ثانية)</option>
+                        <option value="90" {% if sweida_speed == 90 %}selected{% endif %}>متوسط (90 ثانية)</option>
                         <option value="60" {% if sweida_speed == 60 %}selected{% endif %}>سريع (60 ثانية)</option>
+                        <option value="40" {% if sweida_speed == 40 %}selected{% endif %}>سريع جداً (40 ثانية)</option>
                     </select><br>
                     <button type="submit" class="btn" style="background:#7b1fa2; color:#fff; width:100%;">تعديل سرعة الشريط العلوي</button>
                 </form>
@@ -322,10 +326,14 @@ ADMIN_HTML = """
                 <h2 style="color: #d4af37;">⚡ سرعة شريط الأحداث العالمية (السفلي)</h2>
                 <form action="/set_world_speed" method="post">
                     <select name="world_speed">
-                        <option value="160" {% if world_speed == 160 %}selected{% endif %}>بطيء جداً (160 ثانية)</option>
-                        <option value="120" {% if world_speed == 120 %}selected{% endif %}>بطيء (120 ثانية)</option>
-                        <option value="90" {% if world_speed == 90 %}selected{% endif %}>مريح - افتراضي (90 ثانية)</option>
+                        <option value="300" {% if world_speed == 300 %}selected{% endif %}>بطيء جداً (300 ثانية)</option>
+                        <option value="240" {% if world_speed == 240 %}selected{% endif %}>بطيء جداً (240 ثانية)</option>
+                        <option value="180" {% if world_speed == 180 %}selected{% endif %}>بطيء (180 ثانية)</option>
+                        <option value="160" {% if world_speed == 160 %}selected{% endif %}>أبطأ (160 ثانية)</option>
+                        <option value="120" {% if world_speed == 120 %}selected{% endif %}>مريح (120 ثانية)</option>
+                        <option value="90" {% if world_speed == 90 %}selected{% endif %}>متوسط (90 ثانية)</option>
                         <option value="60" {% if world_speed == 60 %}selected{% endif %}>سريع (60 ثانية)</option>
+                        <option value="40" {% if world_speed == 40 %}selected{% endif %}>سريع جداً (40 ثانية)</option>
                     </select><br>
                     <button type="submit" class="btn btn-approve" style="width:100%;">تعديل سرعة الشريط السفلي</button>
                 </form>
@@ -464,7 +472,7 @@ def admin_panel(username: str = Depends(verify_admin)):
     world_news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
-    video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
+    video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
     return Template(ADMIN_HTML).render(
         sweida_news=sweida_news, world_news=world_news, music_files=music_files, video_files=video_files,
         sweida_speed=CURRENT_STATE["sweida_speed"], world_speed=CURRENT_STATE["world_speed"],
@@ -573,7 +581,7 @@ def set_active_song(song_name: str = Form(None), username: str = Depends(verify_
 def set_program_playlist(items: str = Form(...), username: str = Depends(verify_admin)):
     allowed = []
     music_ext = ('.mp3', '.wav', '.ogg', '.m4a')
-    video_ext = ('.mp4', '.mkv', '.avi', '.webm')
+    video_ext = ('.mp4', '.webm')
     for raw in items.splitlines():
         item = raw.strip()
         if not item:
@@ -600,12 +608,12 @@ def stop_program_playlist(username: str = Depends(verify_admin)):
 
 @app.post("/set_sweida_speed")
 def set_sweida_speed(sweida_speed: int = Form(...), username: str = Depends(verify_admin)):
-    CURRENT_STATE["sweida_speed"] = sweida_speed
+    CURRENT_STATE["sweida_speed"] = max(30, min(600, int(sweida_speed)))
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_world_speed")
 def set_world_speed(world_speed: int = Form(...), username: str = Depends(verify_admin)):
-    CURRENT_STATE["world_speed"] = world_speed
+    CURRENT_STATE["world_speed"] = max(30, min(600, int(world_speed)))
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_breaking_banner")
@@ -835,11 +843,11 @@ TICKER_HTML = """
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
-        .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 17px; color: #ffffff; }
+        .ticker-move { display: inline-block; white-space: nowrap; padding-left: 100%; padding-right: 0; font-size: 17px; color: #ffffff; will-change: transform; }
         .ticker-item { display: inline-block; padding: 0 20px; }
         #touch-overlay { position: fixed; bottom: 62px; left: 12px; width: auto; height: auto; z-index: 9999; background: rgba(0,0,0,.72); color: #fff; border: 1px solid #d4af37; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-size: 14px; }
         .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
-        @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(100%, 0, 0); } }
+        @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-100%, 0, 0); } }
     </style>
 </head>
 <body>
@@ -898,7 +906,16 @@ TICKER_HTML = """
         let lastTickerSpeeds = {top: null, bottom: null};
         let playlistDurations = {};
         let playlistSignature = "";
+        let playlistDurationPromise = null;
         let lastPlaylistItem = "";
+
+        function applyTickerSpeed(which, seconds) {
+            const el = document.getElementById(which === 'top' ? 'top-ticker-content' : 'ticker-content');
+            const value = Math.max(30, Math.min(600, Number(seconds) || 90));
+            if (!el) return;
+            // Restart only when the admin changes the speed, not during every poll.
+            el.style.animation = `ticker ${value}s linear infinite`;
+        }
 
         function syncAudio(serverTime, activeSongSetting) {
             if (!songList.length) return;
@@ -918,9 +935,12 @@ TICKER_HTML = """
             if (currentSongPath !== targetSongUrl) {
                 currentSongPath = targetSongUrl;
                 audioPlayer.src = targetSongUrl;
-                try { audioPlayer.currentTime = songOffset; } catch(e) {}
+                audioPlayer.load();
+                audioPlayer.addEventListener('loadedmetadata', () => {
+                    try { audioPlayer.currentTime = songOffset; } catch(e) {}
+                }, {once: true});
                 audioPlayer.play().catch(() => {});
-            } else if (Math.abs(audioPlayer.currentTime - songOffset) > 2) {
+            } else if (Math.abs(audioPlayer.currentTime - songOffset) > 3) {
                 try { audioPlayer.currentTime = songOffset; } catch(e) {}
             }
             if (audioPlayer.paused) audioPlayer.play().catch(() => {});
@@ -928,23 +948,31 @@ TICKER_HTML = """
 
         async function getPlaylistDurations(items) {
             const signature = JSON.stringify(items);
-            if (signature === playlistSignature && Object.keys(playlistDurations).length) return;
+            if (signature === playlistSignature && items.every(item => Number.isFinite(playlistDurations[item.url]) && playlistDurations[item.url] > 0)) return;
+            if (playlistDurationPromise && signature === playlistSignature) return playlistDurationPromise;
             playlistSignature = signature;
             playlistDurations = {};
-            await Promise.all(items.map(item => new Promise(resolve => {
+            playlistDurationPromise = Promise.all(items.map(item => new Promise(resolve => {
                 const el = document.createElement(item.kind === 'video' ? 'video' : 'audio');
                 el.preload = 'metadata';
+                el.muted = true;
                 el.src = item.url;
                 let done = false;
-                const finish = () => {
-                    if (done) return; done = true;
-                    playlistDurations[item.url] = (Number.isFinite(el.duration) && el.duration > 0) ? el.duration : 180;
-                    el.removeAttribute('src'); el.load(); resolve();
+                const finish = (duration) => {
+                    if (done) return;
+                    done = true;
+                    playlistDurations[item.url] = (Number.isFinite(duration) && duration > 0) ? duration : 180;
+                    el.removeAttribute('src');
+                    try { el.load(); } catch(e) {}
+                    resolve();
                 };
-                el.onloadedmetadata = finish;
-                el.onerror = () => { if (!done) { done = true; playlistDurations[item.url] = 180; resolve(); } };
-                setTimeout(() => { if (!done) { done = true; playlistDurations[item.url] = 180; resolve(); } }, 5000);
+                el.onloadedmetadata = () => finish(el.duration);
+                el.onerror = () => finish(180);
+                // Fallback only if metadata cannot be read. MP4/WebM are the supported video formats.
+                setTimeout(() => finish(180), 8000);
             })));
+            await playlistDurationPromise;
+            playlistDurationPromise = null;
         }
 
         async function syncProgramPlaylist(state, serverTime) {
@@ -962,31 +990,54 @@ TICKER_HTML = """
             if (item.kind === 'video') {
                 let vid = document.getElementById('live-video');
                 if (!vid || lastMediaType !== 'playlist-video' || lastPlaylistItem !== item.url) {
-                    stage.innerHTML = `<video id="live-video" class="video-card" playsinline autoplay loop></video>`;
+                    stage.innerHTML = `<video id="live-video" class="video-card" playsinline preload="auto"></video>`;
                     vid = document.getElementById('live-video');
                     vid.src = item.url;
+                    vid.loop = false;
+                    vid.autoplay = true;
+                    vid.addEventListener('loadedmetadata', () => {
+                        try { vid.currentTime = Math.min(pos, Math.max(0, (vid.duration || durations[idx]) - 0.25)); } catch(e) {}
+                        vid.play().catch(() => { vid.muted = true; vid.play().catch(()=>{}); });
+                    }, {once:true});
+                    vid.addEventListener('ended', () => {
+                        // Ask the state loop to recalculate the next server-synchronized item immediately.
+                        lastPlaylistItem = '';
+                        lastMediaType = '';
+                        checkLiveState();
+                    }, {once:true});
+                    vid.addEventListener('error', () => {
+                        console.warn('تعذر تشغيل ملف الفيديو. استخدم MP4 (H.264/AAC) أو WebM:', item.url);
+                    }, {once:true});
                     lastMediaType = 'playlist-video';
                     lastPlaylistItem = item.url;
                 }
                 vid.muted = false;
-                if (Math.abs((vid.currentTime || 0) - pos) > 2) { try { vid.currentTime = pos; } catch(e) {} }
+                if (vid.readyState >= 1 && Math.abs((vid.currentTime || 0) - pos) > 3) {
+                    try { vid.currentTime = pos; } catch(e) {}
+                }
                 if (vid.paused) vid.play().catch(() => { vid.muted = true; vid.play().catch(()=>{}); });
                 audioPlayer.pause(); currentSongPath = "";
             } else {
-                if (lastMediaType !== 'playlist-audio') {
+                if (lastMediaType !== 'playlist-audio' || lastPlaylistItem !== item.url) {
                     stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
                     lastMediaType = 'playlist-audio';
-                    lastPlaylistItem = "";
+                    lastPlaylistItem = item.url;
+                    currentSongPath = '';
                 }
                 if (imageList.length) {
                     const imgIdx = Math.floor(serverTime / 6) % imageList.length;
-                    document.getElementById('main-image').style.backgroundImage = `url('${imageList[imgIdx]}')`;
+                    const image = document.getElementById('main-image');
+                    if (image) image.style.backgroundImage = `url('${imageList[imgIdx]}')`;
                 }
                 if (currentSongPath !== item.url) {
                     currentSongPath = item.url;
                     audioPlayer.src = item.url;
+                    audioPlayer.load();
+                    audioPlayer.addEventListener('loadedmetadata', () => {
+                        try { audioPlayer.currentTime = pos; } catch(e) {}
+                    }, {once:true});
                 }
-                if (Math.abs((audioPlayer.currentTime || 0) - pos) > 2) { try { audioPlayer.currentTime = pos; } catch(e) {} }
+                if (Math.abs((audioPlayer.currentTime || 0) - pos) > 3) { try { audioPlayer.currentTime = pos; } catch(e) {} }
                 if (audioPlayer.paused) audioPlayer.play().catch(()=>{});
             }
         }
@@ -997,13 +1048,13 @@ TICKER_HTML = """
                 const state = await response.json();
                 const serverTime = state.server_time || (Date.now() / 1000);
                 
-                if (lastTickerSpeeds.top !== state.sweida_speed) {
-                    document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
-                    lastTickerSpeeds.top = state.sweida_speed;
+                if (lastTickerSpeeds.top !== Number(state.sweida_speed)) {
+                    applyTickerSpeed('top', state.sweida_speed);
+                    lastTickerSpeeds.top = Number(state.sweida_speed);
                 }
-                if (lastTickerSpeeds.bottom !== state.world_speed) {
-                    document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
-                    lastTickerSpeeds.bottom = state.world_speed;
+                if (lastTickerSpeeds.bottom !== Number(state.world_speed)) {
+                    applyTickerSpeed('bottom', state.world_speed);
+                    lastTickerSpeeds.bottom = Number(state.world_speed);
                 }
                 
                 const banner = document.getElementById('breaking-banner');
