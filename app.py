@@ -708,7 +708,7 @@ def portal_home(lang: str = "ar"):
     articles = [{"id": r[0], "title": (r[3] if lang=="en" else (r[5] if lang=="he" else r[1])), "content": (r[4] if lang=="en" else (r[6] if lang=="he" else r[2]))} for r in rows]
     return Template(PORTAL_MAIN_HTML).render(articles=articles, current_lang=lang)
 
-# --- 7. واجهة البث المباشر الموحد المتزامن ---
+# --- 7. واجهة البث المباشر الحقيقي المتزامن (بدون تحكم المشاهدين) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -724,8 +724,11 @@ TICKER_HTML = """
         .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; padding: 15px; box-sizing: border-box; }
         .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; }
-        video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); object-fit: contain; background-color: #000; }
-        .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-color: #000; }
+        
+        /* إخفاء شريط التحكم ومنع أي تفاعل للمشاهد على الفيديو ليبدو كبث مباشر تلفزيوني حقيقي */
+        video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); object-fit: contain; background-color: #000; pointer-events: none; }
+        
+        .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-color: #000; pointer-events: none; }
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
@@ -751,7 +754,7 @@ TICKER_HTML = """
         <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", currentVideoIdx = 0;
+        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "";
         const audioPlayer = document.getElementById('audio-player');
 
         function enableAudioAndPlay() {
@@ -844,25 +847,24 @@ TICKER_HTML = """
                     if (videoList.length > 0) {
                         let vidEl = document.getElementById('live-video');
                         
-                        if (!vidEl || lastMediaType !== 'video') {
-                            // حساب أي فيديو يجب تشغيله بناءً على وقت السيرفر لضمان المزامنة بين المشاهدين
-                            let totalDur = videoList.length * 60; // افتراض مبدئي 60 ثانية لكل فيديو كمرجع زمني
-                            let timeInCycle = serverTime % totalDur;
-                            let calculatedIdx = Math.floor(timeInCycle / 60) % videoList.length;
-                            currentVideoIdx = calculatedIdx;
+                        // حساب الفيديو الحالي بدقة وفق وقت السيرفر ليكون البث متزامناً بالكامل عند الجميع
+                        let assumedVidDuration = 60; 
+                        let totalPlaylistDuration = videoList.length * assumedVidDuration;
+                        let globalCycleTime = serverTime % totalPlaylistDuration;
+                        let targetIdx = Math.floor(globalCycleTime / assumedVidDuration) % videoList.length;
+                        let targetVideoUrl = videoList[targetIdx];
+                        let exactVideoOffset = globalCycleTime % assumedVidDuration;
 
-                            stage.innerHTML = `<video id="live-video" class="video-card" src="${videoList[currentVideoIdx]}" autoplay playsinline></video>`;
+                        if (!vidEl || lastMediaType !== 'video' || vidEl.getAttribute('data-active') !== targetVideoUrl) {
+                            stage.innerHTML = `<video id="live-video" class="video-card" data-active="${targetVideoUrl}" src="${targetVideoUrl}" autoplay playsinline muted></video>`;
                             lastMediaType = 'video';
                             vidEl = document.getElementById('live-video');
-                            
-                            vidEl.onended = () => {
-                                currentVideoIdx = (currentVideoIdx + 1) % videoList.length;
-                                vidEl.src = videoList[currentVideoIdx];
-                                vidEl.play().catch(()=>{});
-                            };
                         }
-                        
+
                         if (vidEl) {
+                            if (Math.abs(vidEl.currentTime - exactVideoOffset) > 2.0) {
+                                vidEl.currentTime = exactVideoOffset;
+                            }
                             if (vidEl.paused) {
                                 vidEl.play().catch(()=>{});
                             }
