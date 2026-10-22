@@ -37,7 +37,7 @@ CURRENT_STATE = {
     "world_speed": 90
 }
 
-# --- 2. إعدادات الحماية والدوال ---
+# --- 2. إعدادات الحماية المستقلة ---
 security = HTTPBasic()
 ADMIN_USER = "admin"
 ADMIN_PASS = "Bashan2026!"
@@ -46,124 +46,66 @@ PORTAL_ADMIN_USER = "portal_admin"
 PORTAL_ADMIN_PASS = "BashanNews2026!"
 
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
-    is_user_ok = secrets.compare_digest(credentials.username, ADMIN_USER)
-    is_pass_ok = secrets.compare_digest(credentials.password, ADMIN_PASS)
-    if not (is_user_ok and is_pass_ok):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="اسم المستخدم أو كلمة المرور غير صحيحة",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+    if not (secrets.compare_digest(credentials.username, ADMIN_USER) and secrets.compare_digest(credentials.password, ADMIN_PASS)):
+        raise HTTPException(status_code=401, detail="غير مسموح", headers={"WWW-Authenticate": "Basic"})
     return credentials.username
 
 def verify_portal_admin(credentials: HTTPBasicCredentials = Depends(security)):
-    is_user_ok = secrets.compare_digest(credentials.username, PORTAL_ADMIN_USER)
-    is_pass_ok = secrets.compare_digest(credentials.password, PORTAL_ADMIN_PASS)
-    if not (is_user_ok and is_pass_ok):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="بيانات دخول لوحة تحكم الإخبارية غير صحيحة",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+    if not (secrets.compare_digest(credentials.username, PORTAL_ADMIN_USER) and secrets.compare_digest(credentials.password, PORTAL_ADMIN_PASS)):
+        raise HTTPException(status_code=401, detail="غير مسموح", headers={"WWW-Authenticate": "Basic"})
     return credentials.username
 
 def init_dbs():
     try:
-        # قاعدة بيانات البث
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
         default_sources = [
-            ("BBC Arabic - عاجل والشرق الأوسط", "https://feeds.bbci.co.uk/arabic/rss.xml", "الشرق الأوسط"),
-            ("Reuters - الأخبار الرئيسية", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي"),
-            ("CNBC Arabic - اقتصاد وبورصة", "https://www.cnbcarabic.com/rss/news.xml", "اقتصاد")
+            ("BBC Arabic - عاجل والشرق الأوسط", "https://feeds.bbci.co.uk/arabic/rss.xml", "السويداء"),
+            ("Reuters - الأخبار الرئيسية", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي")
         ]
         cursor.executemany("INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)", default_sources)
         conn.commit()
         conn.close()
 
-        # قاعدة بيانات الموقع الإخباري والمقالات
         conn_p = sqlite3.connect(DB_PORTAL)
         cursor_p = conn_p.cursor()
-        cursor_p.execute('''CREATE TABLE IF NOT EXISTS articles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            content TEXT,
-            category TEXT NOT NULL,
-            language TEXT DEFAULT 'ar',
-            source_name TEXT,
-            author TEXT,
-            published_at TEXT,
-            status TEXT DEFAULT 'approved',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
-        cursor_p.execute('''CREATE TABLE IF NOT EXISTS portal_sources (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            url TEXT UNIQUE NOT NULL,
-            category TEXT,
-            language TEXT DEFAULT 'ar'
-        )''')
-        default_portal_sources = [
-            ("BBC Arabic", "https://feeds.bbci.co.uk/arabic/rss.xml", "عالمي", "ar"),
-            ("Reuters", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي", "en"),
-            ("i24NEWS", "https://www.i24news.tv/en/rss", "عالمي", "en"),
-            ("الإمارات اليوم", "https://www.emaratalyoum.com/rss", "اقتصاد", "ar"),
-            ("جريدة الاتحاد", "https://www.alittihad.ai/rss/section/local", "حدث اليوم", "ar")
-        ]
-        cursor_p.executemany("INSERT OR IGNORE INTO portal_sources (name, url, category, language) VALUES (?, ?, ?, ?)", default_portal_sources)
+        cursor_p.execute('''CREATE TABLE IF NOT EXISTS articles (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, content TEXT, category TEXT NOT NULL, language TEXT DEFAULT 'ar', source_name TEXT, author TEXT, published_at TEXT, status TEXT DEFAULT 'approved')''')
         conn_p.commit()
         conn_p.close()
     except Exception:
         pass
 
-def fetch_all_news():
+def fetch_all():
     try:
-        # جلب أخبار البث
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT name, url, category FROM sources")
         for name, url, category in cursor.fetchall():
             try:
                 feed = feedparser.parse(url)
-                for entry in feed.entries[:5]:
+                for entry in feed.entries[:3]:
                     cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name) VALUES (?, ?, ?)", (entry.title.strip(), category, name))
             except Exception:
                 pass
         conn.commit()
         conn.close()
-
-        # جلب أخبار الموقع الإخباري
-        conn_p = sqlite3.connect(DB_PORTAL)
-        cursor_p = conn_p.cursor()
-        cursor_p.execute("SELECT name, url, category, language FROM portal_sources")
-        for name, url, category, lang in cursor_p.fetchall():
-            try:
-                feed = feedparser.parse(url)
-                for entry in feed.entries[:4]:
-                    cursor_p.execute("INSERT OR IGNORE INTO articles (title, content, category, language, source_name, author, published_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved')",
-                                     (entry.title.strip(), getattr(entry, 'summary', entry.title), category, lang, name, "فريق التحرير", getattr(entry, 'published', 'حديثاً')))
-            except Exception:
-                pass
-        conn_p.commit()
-        conn_p.close()
     except Exception:
         pass
 
-app = FastAPI(title="BASHAN MEDIA SYSTEM")
+app = FastAPI(title="BASHAN SYSTEM")
 app.mount("/music", StaticFiles(directory=UPLOAD_DIR), name="music")
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 app.mount("/videos", StaticFiles(directory=VIDEOS_DIR), name="videos")
 
 scheduler = BackgroundScheduler()
-
 @app.on_event("startup")
 def startup_event():
     init_dbs()
-    fetch_all_news()
+    fetch_all()
     try:
-        scheduler.add_job(fetch_all_news, 'interval', minutes=10)
+        scheduler.add_job(fetch_all, 'interval', minutes=15)
         scheduler.start()
     except Exception:
         pass
@@ -177,15 +119,13 @@ def get_logo():
 @app.get("/api/get_images")
 def get_images():
     if os.path.exists(IMAGES_DIR):
-        files = [f for f in os.listdir(IMAGES_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
-        return [f"/images/{f}" for f in files]
+        return [f"/images/{f}" for f in os.listdir(IMAGES_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
     return []
 
 @app.get("/api/get_songs")
 def get_songs():
     if os.path.exists(UPLOAD_DIR):
-        files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))]
-        return [f"/music/{f}" for f in files]
+        return [f"/music/{f}" for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))]
     return []
 
 @app.get("/api/live_state")
@@ -195,30 +135,31 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث المباشر (/admin) ---
+# --- 3. لوحة تحكم البث المباشر الأصلية والشاملة بالكامل (/admin) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
-    <title>BASHAN - لوحة تحكم البث</title>
+    <title>BASHAN - لوحة تحكم البث المباشر</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #080b14; color: #eaeaea; margin: 0; padding: 20px; }
         h1 { color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px; }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .card { background: #121824; padding: 20px; border-radius: 8px; border: 1px solid #1e293b; margin-bottom: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 10px; text-align: right; border-bottom: 1px solid #1e293b; }
+        th, td { padding: 10px; text-align: right; border-bottom: 1px solid #1e293b; font-size: 14px; }
         th { background: #1a2332; color: #d4af37; }
         .btn { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px; }
         .btn-approve { background: #2e7d32; color: white; }
         .btn-reject { background: #c62828; color: white; }
-        select, textarea { width: 100%; padding: 10px; background: #1a2332; color: #fff; border: 1px solid #2a364f; border-radius: 4px; }
+        .btn-all { background: #d4af37; color: #000; padding: 10px 15px; font-weight: bold; width: 100%; margin-bottom: 15px; border-radius: 6px; }
+        textarea, select { width: 100%; padding: 10px; background: #1a2332; color: #fff; border: 1px solid #2a364f; border-radius: 4px; box-sizing: border-box; }
+        .badge { padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
     </style>
 </head>
 <body>
     <h1>BASHAN LINE — لوحة تحكم البث المباشر 🔒</h1>
-    <p><a href="/news" style="color:#60a5fa; font-weight:bold;">← الانتقال إلى لوحة وموقع الأخبار</a></p>
     <div class="grid">
         <div>
             <div class="card" style="border: 2px solid #3b82f6;">
@@ -226,24 +167,78 @@ ADMIN_HTML = """
                 <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:48%; padding:10px;">عرض الصور 🖼️</button></a>
                 <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:48%; padding:10px;">عرض الفيديو 🎬</button></a>
             </div>
+
+            <div class="card" style="border: 2px solid #7b1fa2;">
+                <h2 style="color: #ab47bc;">🟣 سرعة شريط السويداء</h2>
+                <form action="/set_sweida_speed" method="post">
+                    <select name="sweida_speed">
+                        <option value="120" {% if sweida_speed == 120 %}selected{% endif %}>بطيء جداً وهادئ</option>
+                        <option value="90" {% if sweida_speed == 90 %}selected{% endif %}>هادئ ومريح (الافتراضي)</option>
+                        <option value="60" {% if sweida_speed == 60 %}selected{% endif %}>متوسط</option>
+                        <option value="45" {% if sweida_speed == 45 %}selected{% endif %}>سريع</option>
+                    </select><br><br>
+                    <button type="submit" class="btn" style="background:#7b1fa2; color:#fff; width:100%;">تعديل سرعة الشريط</button>
+                </form>
+            </div>
+
+            <div class="card" style="border: 2px solid #d4af37;">
+                <h2 style="color: #d4af37;">⚡ سرعة الشريط العالمي</h2>
+                <form action="/set_world_speed" method="post">
+                    <select name="world_speed">
+                        <option value="120" {% if world_speed == 120 %}selected{% endif %}>بطيء جداً وهادئ</option>
+                        <option value="90" {% if world_speed == 90 %}selected{% endif %}>هادئ ومريح (الافتراضي)</option>
+                        <option value="60" {% if world_speed == 60 %}selected{% endif %}>متوسط</option>
+                        <option value="45" {% if world_speed == 45 %}selected{% endif %}>سريع</option>
+                    </select><br><br>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تعديل سرعة الشريط</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2>🎬 اختيار فيديو البث المباشر</h2>
+                <form action="/set_active_video" method="post">
+                    <select name="video_name" required>
+                        {% for vid in video_files %}<option value="{{ vid }}">{{ vid }}</option>{% endfor %}
+                    </select><br><br>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تغيير وعرض الفيديو</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h2>🎵 تشغيل الموسيقى الخلفية (مع الصور)</h2>
+                <form action="/set_active_song" method="post">
+                    <select name="song_name" required>
+                        <option value="AUTO_PLAYLIST">تشغيل جميع الأغاني بالتتابع تلقائياً 🔄</option>
+                        <option value="">إيقاف الموسيقى ❌</option>
+                        {% for song in music_files %}<option value="{{ song }}">{{ song }}</option>{% endfor %}
+                    </select><br><br>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تفعيل الموسيقى والانتقال للصور</button>
+                </form>
+            </div>
+
             <div class="card" style="border: 2px solid #c62828;">
-                <h2 style="color: #ff5252;">🚨 نشر خبر عاجل بالشريط</h2>
+                <h2 style="color: #ff5252;">🚨 نشر خبر عاجل بارز</h2>
                 <form action="/set_breaking_banner" method="post">
-                    <textarea name="banner_text" rows="2" required></textarea><br><br>
+                    <textarea name="banner_text" rows="2" placeholder="اكتب العنوان العاجل..." required></textarea><br><br>
                     <button type="submit" class="btn" style="background:#c62828; color:#fff; width:100%;">عرض الخبر 🔴</button>
                 </form>
-                {% if current_banner %}<br><a href="/clear_breaking_banner"><button class="btn btn-reject" style="width:100%;">إلغاء الخبر</button></a>{% endif %}
+                {% if current_banner %}<br><a href="/clear_breaking_banner"><button class="btn btn-reject" style="width:100%;">إلغاء الخبر العاجل</button></a>{% endif %}
             </div>
         </div>
+
         <div class="card">
-            <h2>أخبار البث الواردة</h2>
+            <h2>أخبار البث الواردة قيد المراجعة</h2>
+            <a href="/approve_all"><button class="btn-all">✔ اعتماد جميع الأخبار دفعة واحدة</button></a>
             <table>
                 <tr><th>التصنيف</th><th>الخبر</th><th>إجراء</th></tr>
                 {% for item in news %}
                 <tr>
-                    <td>{{ item[2] }}</td>
+                    <td><span class="badge" style="background:#7b1fa2; color:#fff;">{{ item[2] }}</span></td>
                     <td>{{ item[1] }}</td>
-                    <td><a href="/approve/{{ item[0] }}"><button class="btn btn-approve">اعتماد</button></a></td>
+                    <td style="white-space:nowrap;">
+                        <a href="/approve/{{ item[0] }}"><button class="btn btn-approve">اعتماد</button></a>
+                        <a href="/reject/{{ item[0] }}"><button class="btn btn-reject">حذف</button></a>
+                    </td>
                 </tr>
                 {% endfor %}
             </table>
@@ -262,7 +257,12 @@ def admin_panel(username: str = Depends(verify_admin)):
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
     video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
-    return Template(ADMIN_HTML).render(news=news, music_files=music_files, video_files=video_files, current_banner=CURRENT_STATE["breaking_banner"], sweida_speed=CURRENT_STATE["sweida_speed"], world_speed=CURRENT_STATE["world_speed"])
+    return Template(ADMIN_HTML).render(
+        news=news, music_files=music_files, video_files=video_files, 
+        current_banner=CURRENT_STATE["breaking_banner"],
+        sweida_speed=CURRENT_STATE["sweida_speed"],
+        world_speed=CURRENT_STATE["world_speed"]
+    )
 
 @app.get("/switch_to_images")
 def switch_to_images(username: str = Depends(verify_admin)):
@@ -272,6 +272,16 @@ def switch_to_images(username: str = Depends(verify_admin)):
 @app.get("/switch_to_video")
 def switch_to_video(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.post("/set_sweida_speed")
+def set_sweida_speed(sweida_speed: int = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["sweida_speed"] = sweida_speed
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.post("/set_world_speed")
+def set_world_speed(world_speed: int = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["world_speed"] = world_speed
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_breaking_banner")
@@ -284,6 +294,24 @@ def clear_breaking_banner(username: str = Depends(verify_admin)):
     CURRENT_STATE["breaking_banner"] = ""
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
+@app.post("/set_active_video")
+def set_active_video(video_name: str = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["media_type"] = "video"
+    CURRENT_STATE["active_video"] = f"/videos/{video_name}"
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.post("/set_active_song")
+def set_active_song(song_name: str = Form(None), username: str = Depends(verify_admin)):
+    if song_name == "AUTO_PLAYLIST":
+        CURRENT_STATE["media_type"] = "image"
+        CURRENT_STATE["active_song"] = "AUTO_PLAYLIST"
+    elif song_name:
+        CURRENT_STATE["media_type"] = "image" 
+        CURRENT_STATE["active_song"] = f"/music/{song_name}"
+    else:
+        CURRENT_STATE["active_song"] = ""
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
 @app.get("/approve/{news_id}")
 def approve_news(news_id: int, username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
@@ -293,14 +321,187 @@ def approve_news(news_id: int, username: str = Depends(verify_admin)):
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
+@app.get("/approve_all")
+def approve_all_news(username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE news SET status = 'approved' WHERE status = 'pending'")
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- 4. لوحة تحكم الموقع الإخباري والمقالات المستقلة (/news/admin) ---
+@app.get("/reject/{news_id}")
+def reject_news(news_id: int, username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM news WHERE id = ?", (news_id,))
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+
+# --- 4. واجهة البث المباشر المستقرة (/ticker) ---
+TICKER_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BASHAN LINE - البث المباشر</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; user-select: none; }
+        .corner-logo { position: absolute; top: 65px; right: 15px; z-index: 100; width: 130px; filter: drop-shadow(0px 4px 15px rgba(0,0,0,0.8)); }
+        .corner-logo img { width: 100%; height: auto; }
+        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
+        .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
+        .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; }
+        .image-card { width: 92%; height: 88%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-size: cover; background-position: center; transition: background-image 1.2s ease-in-out; position: relative; }
+        video.video-card { width: 92%; height: 88%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); object-fit: cover; pointer-events: none; }
+        .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; }
+        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
+        .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
+        .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
+        .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 17px; color: #ffffff; }
+        .ticker-item { display: inline-block; padding: 0 20px; }
+        #touch-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: transparent; cursor: pointer; }
+        @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(100%, 0, 0); } }
+    </style>
+</head>
+<body>
+    <div id="touch-overlay"></div>
+    <div class="corner-logo"><img src="/logo.png" alt="Logo"></div>
+    <div class="top-ticker-container">
+        <div class="top-ticker-title">أخبار السويداء</div>
+        <div class="ticker-wrap"><div class="ticker-move" id="top-ticker-content">جاري التحميل...</div></div>
+    </div>
+    <div class="center-stage" id="stage-container"><div class="image-card" id="main-image"></div></div>
+    <audio id="audio-player" preload="auto" style="display:none;"></audio>
+    <div class="breaking-banner" id="breaking-banner"><span>🔴 عاجل: </span><span id="breaking-text"></span></div>
+    <div class="ticker-container">
+        <div class="ticker-title">أخبار عالمية</div>
+        <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
+    </div>
+    <script>
+        let imageList = [], songList = [], currentSongPath = "", currentSongIndex = 0, isAudioUnlocked = false;
+        const audioPlayer = document.getElementById('audio-player');
+
+        function unlockAudio() {
+            if (isAudioUnlocked) return;
+            const vid = document.getElementById('live-video');
+            if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
+            if (audioPlayer && audioPlayer.src) { audioPlayer.muted = false; audioPlayer.play().catch(()=>{}); }
+            isAudioUnlocked = true;
+            document.getElementById('touch-overlay').style.display = 'none';
+        }
+        document.getElementById('touch-overlay').addEventListener('click', unlockAudio);
+
+        async function loadAssets() {
+            try {
+                imageList = await (await fetch('/api/get_images')).json();
+                songList = await (await fetch('/api/get_songs')).json();
+            } catch(e){}
+        }
+
+        function setSongSource(targetUrl) {
+            if (currentSongPath !== targetUrl) {
+                currentSongPath = targetUrl;
+                audioPlayer.src = targetUrl;
+                audioPlayer.currentTime = 0;
+                audioPlayer.play().then(() => { audioPlayer.muted = false; }).catch(() => {});
+            } else if (audioPlayer.paused && currentSongPath !== "") {
+                audioPlayer.play().catch(() => {});
+            }
+        }
+
+        audioPlayer.addEventListener('ended', () => {
+            if (songList.length > 0) {
+                currentSongIndex = (currentSongIndex + 1) % songList.length;
+                setSongSource(songList[currentSongIndex]);
+            }
+        });
+
+        async function checkLiveState() {
+            try {
+                const state = await (await fetch('/api/live_state')).json();
+                const serverTime = state.server_time || (Date.now() / 1000);
+                
+                document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
+                document.getElementById('top-ticker-content').style.animationDelay = `-${serverTime % state.sweida_speed}s`;
+                document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
+                document.getElementById('ticker-content').style.animationDelay = `-${serverTime % state.world_speed}s`;
+                
+                const banner = document.getElementById('breaking-banner');
+                if(state.breaking_banner) { document.getElementById('breaking-text').innerText = state.breaking_banner; banner.style.display = 'flex'; } else { banner.style.display = 'none'; }
+                
+                const stage = document.getElementById('stage-container');
+                if(state.media_type === 'video') {
+                    if(!document.getElementById('live-video')) {
+                        stage.innerHTML = `<video id="live-video" class="video-card" src="${state.active_video}" autoplay loop playsinline></video>`;
+                    }
+                    audioPlayer.pause();
+                    currentSongPath = "";
+                } else {
+                    if(!document.getElementById('main-image')) {
+                        stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
+                    }
+                    if(imageList.length > 0) {
+                        const idx = Math.floor(serverTime / 6) % imageList.length;
+                        document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
+                    }
+                    if(state.active_song === "AUTO_PLAYLIST" && songList.length > 0) {
+                        setSongSource(songList[currentSongIndex]);
+                    } else if(state.active_song) {
+                        setSongSource(state.active_song);
+                    } else {
+                        audioPlayer.pause();
+                        currentSongPath = "";
+                    }
+                }
+            } catch(e){}
+        }
+
+        async function updateTickers() {
+            try {
+                const news = await (await fetch('/api/approved_news')).json();
+                let s = '', w = '';
+                news.forEach(i => {
+                    if(i.category === 'السويداء') s += `<div class="ticker-item">${i.title}</div> • `;
+                    else w += `<div class="ticker-item">${i.title}</div> • `;
+                });
+                document.getElementById('top-ticker-content').innerHTML = s;
+                document.getElementById('ticker-content').innerHTML = w;
+            } catch(e){}
+        }
+
+        loadAssets(); checkLiveState(); updateTickers();
+        setInterval(checkLiveState, 1000);
+        setInterval(updateTickers, 20000);
+    </script>
+</body>
+</html>
+"""
+
+@app.get("/ticker", response_class=HTMLResponse)
+def get_ticker():
+    return TICKER_HTML
+
+@app.get("/api/approved_news")
+def get_approved_news():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 30")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"title": r[0], "category": r[1]} for r in rows]
+
+
+# --- 5. لوحة التحكم الإخبارية المستقلة تماماً (/news/admin) مع زر عودة للبث ---
 ADMIN_PORTAL_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
-    <title>BASHAN - لوحة تحكم الموقع الإخباري</title>
+    <title>BASHAN - لوحة تحكم الأخبار</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #080b14; color: #eaeaea; margin: 0; padding: 20px; }
         h1 { color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px; }
@@ -312,19 +513,21 @@ ADMIN_PORTAL_HTML = """
         .btn { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
         .btn-approve { background: #2e7d32; color: white; }
         .btn-reject { background: #c62828; color: white; }
+        .btn-back { background: #7b1fa2; color: white; text-decoration: none; padding: 8px 16px; border-radius: 6px; font-weight: bold; display: inline-block; margin-bottom: 15px; }
         input, textarea, select { width: 100%; padding: 10px; background: #1a2332; color: #fff; border: 1px solid #2a364f; border-radius: 4px; box-sizing: border-box; margin-bottom: 10px; }
     </style>
 </head>
 <body>
-    <h1>📰 BASHAN — لوحة تحكم الموقع الإخباري والمقالات (خاص) 🔒</h1>
-    <p><a href="/news" target="_blank" style="color: #60a5fa; font-weight: bold;">← معاينة الموقع الإخباري</a> | <a href="/admin" style="color: #d4af37;">لوحة البث</a></p>
-    
+    <h1>📰 BASHAN — لوحة تحكم الموقع الإخباري والمقالات 🔒</h1>
+    <div style="margin-top: 15px;">
+        <a href="/admin" class="btn-back">⬅ العودة إلى لوحة تحكم البث المباشر</a>
+        <a href="/news" target="_blank" style="color: #60a5fa; font-weight: bold; margin-right: 15px;">معاينة الموقع الإخباري ↗</a>
+    </div>
     <div class="grid">
         <div class="card">
-            <h2 style="color: #d4af37;">✍️ كتابة مقال أو خبر محلي (السويداء أو عام)</h2>
+            <h2 style="color: #d4af37;">✍️ إضافة خبر أو مقال جديد</h2>
             <form action="/news/admin/add" method="post">
-                <label>العنوان:</label>
-                <input type="text" name="title" required>
+                <label>العنوان:</label><input type="text" name="title" required>
                 <label>التصنيف:</label>
                 <select name="category">
                     <option value="عاجل">عاجل</option>
@@ -335,30 +538,19 @@ ADMIN_PORTAL_HTML = """
                     <option value="عالمي">عالمي</option>
                 </select>
                 <label>اللغة:</label>
-                <select name="language">
-                    <option value="ar">العربية</option>
-                    <option value="en">English</option>
-                    <option value="he">עברית</option>
-                </select>
-                <label>الكاتب:</label>
-                <input type="text" name="author" value="فريق تحرير باشان" required>
-                <label>المصدر:</label>
-                <input type="text" name="source_name" value="خاص - باشان للإعلام" required>
-                <label>المحتوى:</label>
-                <textarea name="content" rows="4" required></textarea>
-                <button type="submit" class="btn btn-approve" style="width:100%; padding:10px;">نشر المقال 🚀</button>
+                <select name="language"><option value="ar">العربية</option><option value="en">English</option><option value="he">עברית</option></select>
+                <label>الكاتب:</label><input type="text" name="author" value="فريق تحرير باشان" required>
+                <label>المصدر:</label><input type="text" name="source_name" value="خاص" required>
+                <label>المحتوى:</label><textarea name="content" rows="4" required></textarea>
+                <button type="submit" class="btn btn-approve" style="width:100%; padding:10px;">نشر الخبر 🚀</button>
             </form>
         </div>
         <div class="card">
-            <h2>المقالات المنشورة</h2>
+            <h2>الأخبار المنشورة</h2>
             <table>
-                <tr><th>التصنيف</th><th>العنوان</th><th>الإجراء</th></tr>
+                <tr><th>التصنيف</th><th>العنوان</th><th>إجراء</th></tr>
                 {% for item in articles %}
-                <tr>
-                    <td>{{ item[3] }}</td>
-                    <td>{{ item[1] }}</td>
-                    <td><a href="/news/admin/delete/{{ item[0] }}"><button class="btn btn-reject">حذف</button></a></td>
-                </tr>
+                <tr><td>{{ item[3] }}</td><td>{{ item[1] }}</td><td><a href="/news/admin/delete/{{ item[0] }}"><button class="btn btn-reject">حذف</button></a></td></tr>
                 {% endfor %}
             </table>
         </div>
@@ -396,104 +588,7 @@ def portal_delete_article(article_id: int, username: str = Depends(verify_portal
     return HTMLResponse("<script>window.location.href='/news/admin';</script>")
 
 
-# --- 5. واجهة البث المباشر الأساسية (/ticker) ---
-TICKER_HTML = """
-<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<head>
-    <meta charset="UTF-8">
-    <title>BASHAN LINE - البث المباشر</title>
-    <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; }
-        .corner-logo { position: absolute; top: 75px; right: 25px; z-index: 100; width: 170px; }
-        .corner-logo img { width: 100%; height: auto; }
-        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 60px; background: rgba(20, 10, 30, 0.98); border-bottom: 3px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; }
-        .top-ticker-title { background: #7b1fa2; color: #fff; padding: 0 25px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 20px; }
-        .center-stage { position: absolute; top: 60px; left: 0; width: 100%; height: calc(100% - 120px); display: flex; justify-content: center; align-items: center; }
-        .image-card, video.video-card { width: 82%; height: 82%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); object-fit: cover; }
-        .breaking-banner { position: absolute; bottom: 60px; left: 0; width: 100%; background: #b71c1c; color: #fff; padding: 8px 25px; font-size: 20px; font-weight: 900; display: none; align-items: center; z-index: 999; }
-        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 60px; background: rgba(8, 11, 20, 0.98); border-top: 3px solid #d4af37; display: flex; align-items: center; z-index: 1000; }
-        .ticker-title { background: #d4af37; color: #000; padding: 0 25px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 20px; }
-        .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; }
-        .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 20px; }
-        @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(100%, 0, 0); } }
-    </style>
-</head>
-<body>
-    <div class="corner-logo"><img src="/logo.png" alt="Logo"></div>
-    <div class="top-ticker-container">
-        <div class="top-ticker-title">أخبار السويداء</div>
-        <div class="ticker-wrap"><div class="ticker-move" id="top-ticker-content">جاري التحميل...</div></div>
-    </div>
-    <div class="center-stage" id="stage-container"><div class="image-card" id="main-image"></div></div>
-    <audio id="audio-player" style="display:none;" autoplay></audio>
-    <div class="breaking-banner" id="breaking-banner"><span>🔴 عاجل: </span><span id="breaking-text"></span></div>
-    <div class="ticker-container">
-        <div class="ticker-title">أخبار عالمية</div>
-        <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
-    </div>
-    <script>
-        let imageList = [];
-        async function loadImages() {
-            try { const res = await fetch('/api/get_images'); imageList = await res.json(); } catch(e){}
-        }
-        async function checkLiveState() {
-            try {
-                const res = await fetch('/api/live_state');
-                const state = await res.json();
-                const serverTime = state.server_time || (Date.now() / 1000);
-                
-                document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
-                document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
-                
-                const banner = document.getElementById('breaking-banner');
-                if(state.breaking_banner) { document.getElementById('breaking-text').innerText = state.breaking_banner; banner.style.display = 'flex'; } else { banner.style.display = 'none'; }
-                
-                const stage = document.getElementById('stage-container');
-                if(state.media_type === 'video') {
-                    stage.innerHTML = `<video class="video-card" src="${state.active_video}" autoplay loop playsinline></video>`;
-                } else if(imageList.length > 0) {
-                    const idx = Math.floor(serverTime / 6) % imageList.length;
-                    stage.innerHTML = `<div class="image-card" style="background-image: url('${imageList[idx]}'); background-size: cover; background-position: center;"></div>`;
-                }
-            } catch(e){}
-        }
-        async function updateTickers() {
-            try {
-                const res = await fetch('/api/approved_news');
-                const news = await res.json();
-                let sHtml = '', wHtml = '';
-                news.forEach(i => {
-                    if(i.category === 'السويداء') sHtml += `${i.title} • `;
-                    else wHtml += `${i.title} • `;
-                });
-                document.getElementById('top-ticker-content').innerHTML = sHtml;
-                document.getElementById('ticker-content').innerHTML = wHtml;
-            } catch(e){}
-        }
-        loadImages(); checkLiveState(); updateTickers();
-        setInterval(checkLiveState, 1000);
-        setInterval(updateTickers, 20000);
-    </script>
-</body>
-</html>
-"""
-
-@app.get("/ticker", response_class=HTMLResponse)
-def get_ticker():
-    return TICKER_HTML
-
-@app.get("/api/approved_news")
-def get_approved_news():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 30")
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"title": r[0], "category": r[1]} for r in rows]
-
-
-# --- 6. واجهة الموقع الإخباري الرئيسي (/news) ---
+# --- 6. الموقع الإخباري الزائر (/news) ---
 PORTAL_MAIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -598,7 +693,6 @@ CONTACT_HTML = """
 <body>
     <div class="box">
         <h1>اتصل بفريق باشان للإعلام</h1>
-        <p>للتواصل الإخباري، أو الشكاوى، والتواصل التجاري:</p>
         <p>البريد الإلكتروني: <a href="mailto:contact@bashanline.com">contact@bashanline.com</a></p>
         <p><a href="/news">← العودة إلى الموقع الإخباري</a></p>
     </div>
