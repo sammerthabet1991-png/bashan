@@ -64,7 +64,6 @@ def init_dbs():
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
-        # Migrate older installations safely: CREATE TABLE IF NOT EXISTS does not add columns.
         news_columns = {row[1] for row in cursor.execute("PRAGMA table_info(news)").fetchall()}
         for column, definition in [
             ("category", "TEXT"),
@@ -74,11 +73,7 @@ def init_dbs():
         ]:
             if column not in news_columns:
                 cursor.execute(f"ALTER TABLE news ADD COLUMN {column} {definition}")
-        # Restore legacy manually-entered Suwayda headlines to the manual/top ticker.
-        cursor.execute("UPDATE news SET source_name = 'لوحة البث', status = 'approved' WHERE (source_name IS NULL OR TRIM(source_name) = '' OR LOWER(source_name) IN ('يدوي','manual','manual entry','السويداء')) AND LOWER(TRIM(COALESCE(category,''))) IN ('السويداء','أخبار السويداء','محلي','محلية')")
-        # RSS sources for the bottom ticker only. Every fetched headline is pending
-        # until the admin approves it. Google News RSS is used for outlets without
-        # a reliably available public RSS endpoint (e.g. Reuters / i24NEWS).
+        
         default_sources = [
             ("BBC News عربي", "https://feeds.bbci.co.uk/arabic/rss.xml", "عالمي"),
             ("Reuters عبر Google News", "https://news.google.com/rss/search?q=site%3Areuters.com&hl=ar&gl=AE&ceid=AE%3Aar", "صحافة عالمية"),
@@ -142,6 +137,7 @@ def fetch_portal_news():
                         continue
                     cursor.execute("SELECT id FROM news WHERE title = ?", (title,))
                     if not cursor.fetchone():
+                        # ضمان تسجيل المصدر صراحةً لتوجيه الخبر بالشريط السفلي فقط
                         cursor.execute("INSERT INTO news (title, category, source_name, status) VALUES (?, ?, ?, 'pending')", (title, category, name))
             except Exception as exc:
                 print(f"RSS fetch failed for {name} ({url}): {exc}")
@@ -275,7 +271,6 @@ ADMIN_HTML = """
                     <button type="submit" class="btn btn-approve" style="width:100%;">تشغيل هذا الفيديو 🎬</button>
                 </form>
                 
-                <!-- أزرار التحكم الخاصة بك في لوحة الإدارة -->
                 <div style="margin-top: 15px; background: #1a2332; padding: 12px; border-radius: 6px; text-align: center;">
                     <p style="color: #d4af37; margin-top: 0; font-weight: bold;">🎛️ لوحة تحكم الإدارة بالفيديو</p>
                     <button class="btn btn-control" onclick="adminPlay()">تشغيل ▶</button>
@@ -413,11 +408,11 @@ ADMIN_HTML = """
 
         <div>
             <div class="card" style="border: 2px solid #d4af37;">
-                <h2 style="color: #d4af37;">✍️ إضافة خبر جديد للشريط يدوياً</h2>
+                <h2 style="color: #d4af37;">✍️ إضافة خبر جديد للشريط العلوي يدوياً</h2>
                 <form action="/admin/add_ticker_news" method="post">
                     <input type="text" name="title" placeholder="اكتب نص الخبر..." required>
                     <input type="hidden" name="category" value="السويداء">
-                    <p style="color:#c4b5fd;font-size:13px;margin-top:0;">هذا الحقل ينشر الخبر يدوياً في الشريط العلوي فقط.</p>
+                    <p style="color:#c4b5fd;font-size:13px;margin-top:0;">هذا الحقل ينشر الخبر يدوياً في الشريط العلوي (السويداء) فقط.</p>
                     <button type="submit" class="btn btn-approve" style="width:100%;">نشر مباشر 🚀</button>
                 </form>
             </div>
@@ -443,9 +438,9 @@ ADMIN_HTML = """
                 </table>
             </div>
 
-            <!-- قسم مستقل للشريط السفلي (العالمي) -->
+            <!-- قسم مستقل للشريط السفلي (العالمي) - الأخبار المسحوبة فقط -->
             <div class="card" style="border: 2px solid #d4af37;">
-                <h2 style="color: #d4af37;">⚡ مراجعة أخبار RSS للشريط السفلي — لا تظهر قبل الاعتماد</h2>
+                <h2 style="color: #d4af37;">⚡ مراجعة أخبار المواقع للشريط السفلي فقط</h2>
                 <table>
                     <tr><th>الخبر</th><th>الحالة</th><th>الإجراءات</th></tr>
                     {% for item in world_news %}
@@ -526,8 +521,10 @@ EDIT_NEWS_HTML = """
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name = 'لوحة البث' OR ((source_name IS NULL OR TRIM(source_name) = '' OR LOWER(source_name) IN ('يدوي','manual','manual entry','السويداء')) AND LOWER(TRIM(COALESCE(category,''))) IN ('السويداء','أخبار السويداء','محلي','محلية')) ORDER BY id DESC LIMIT 50")
+    # الشريط العلوي يعرض فقط الأخبار المضافة يدوياً من لوحة البث
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name = 'لوحة البث' ORDER BY id DESC LIMIT 50")
     sweida_news = cursor.fetchall()
+    # الشريط السفلي يعرض حصراً الأخبار المسحوبة من المواقع الخارجية (RSS)
     cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name IS NOT NULL AND source_name <> 'لوحة البث' ORDER BY id DESC LIMIT 100")
     world_news = cursor.fetchall()
     conn.close()
@@ -643,7 +640,6 @@ def set_active_song(song_name: str = Form(None), username: str = Depends(verify_
 
 @app.post("/set_program_playlist")
 async def set_program_playlist(request: Request, username: str = Depends(verify_admin)):
-    """Accept either JSON {items: "..."} or a normal HTML form submission."""
     items_text = ""
     content_type = request.headers.get("content-type", "").lower()
     try:
@@ -673,7 +669,7 @@ async def set_program_playlist(request: Request, username: str = Depends(verify_
             allowed.append({"url": f"/videos/{filename}", "kind": "video"})
 
     if not allowed:
-        return JSONResponse(status_code=400, content={"ok": False, "message": "لم يتم العثور على ملفات صالحة. تأكد من أن كل سطر يحتوي مسار ملف موجوداً مثل /music/song.mp3 أو /videos/program.mp4."})
+        return JSONResponse(status_code=400, content={"ok": False, "message": "لم يتم العثور على ملفات صالحة."})
 
     CURRENT_STATE["playlist"] = allowed
     CURRENT_STATE["playlist_started_at"] = time.time()
@@ -918,7 +914,6 @@ TICKER_HTML = """
         .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; padding: 15px; box-sizing: border-box; isolation: isolate; }
         .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; }
         
-        /* إخفاء تام لأي تحكم أو شريط للمشاهدين ليبدو كبث مباشر حقيقي */
         video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); object-fit: contain; background-color: #000; pointer-events: none; }
         
         .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-color: #000; pointer-events: none; }
@@ -999,7 +994,6 @@ TICKER_HTML = """
             const el = document.getElementById(which === 'top' ? 'top-ticker-content' : 'ticker-content');
             const value = Math.max(30, Math.min(600, Number(seconds) || 90));
             if (!el || el.dataset.tickerSpeed === String(value)) return;
-            // Do not restart the animation on every 10-second news refresh.
             el.dataset.tickerSpeed = String(value);
             el.style.animation = `${which === 'top' ? 'top-ticker-motion' : 'bottom-ticker-motion'} ${value}s linear infinite`;
         }
@@ -1055,7 +1049,6 @@ TICKER_HTML = """
                 };
                 el.onloadedmetadata = () => finish(el.duration);
                 el.onerror = () => finish(180);
-                // Fallback only if metadata cannot be read. MP4/WebM are the supported video formats.
                 setTimeout(() => finish(180), 8000);
             })));
             await playlistDurationPromise;
@@ -1087,8 +1080,6 @@ TICKER_HTML = """
                         vid.play().catch(() => { vid.muted = true; vid.play().catch(()=>{}); });
                     }, {once:true});
                     vid.addEventListener('ended', () => {
-                        // If metadata probing failed and used the fallback duration, learn the real duration
-                        // so the server-clock playlist can advance instead of restarting the same clip.
                         const actualDuration = Number(vid.duration);
                         if (Number.isFinite(actualDuration) && actualDuration > 0) {
                             playlistDurations[item.url] = actualDuration;
@@ -1100,8 +1091,6 @@ TICKER_HTML = """
                         checkLiveState();
                     }, {once:true});
                     vid.addEventListener('error', () => {
-                        console.warn('تعذر تشغيل ملف الفيديو. استخدم MP4 (H.264/AAC) أو WebM:', item.url);
-                        // Move past an unreadable item rather than retrying it forever.
                         playlistDurations[item.url] = Math.max(1, pos + 1);
                         lastPlaylistItem = '';
                         lastMediaType = '';
@@ -1173,8 +1162,6 @@ TICKER_HTML = """
                 } 
                 else if(state.media_type === 'video') {
                     if (state.active_video && videoList.length) {
-                        // كل المشاهدين يحسبون الفيديو وموضعه من ساعة السيرفر نفسها.
-                        // لذلك دخول مشاهد جديد أو اختلاف توقيت انتهاء الفيديو محلياً لا يغيّر ترتيب البث.
                         const startUrl = videoList.includes(state.active_video) ? state.active_video : videoList[0];
                         const startIndex = Math.max(0, videoList.indexOf(startUrl));
                         const orderedVideos = videoList.slice(startIndex).concat(videoList.slice(0, startIndex));
@@ -1243,8 +1230,6 @@ TICKER_HTML = """
         }
 
         function renderTickerContent(payload) {
-            // Strict separation: top = manually entered admin headlines;
-            // bottom = RSS headlines that have been approved in admin.
             const topNews = Array.isArray(payload) ? payload.filter(i => i.source_name === 'لوحة البث') : (payload && Array.isArray(payload.top) ? payload.top : []);
             const bottomNews = Array.isArray(payload) ? payload.filter(i => i.source_name && i.source_name !== 'لوحة البث') : (payload && Array.isArray(payload.bottom) ? payload.bottom : []);
             const localItems = topNews.map(i => `<span class="ticker-item">${escapeTickerText(String(i.title || '').trim())}</span><span class="ticker-separator"> • </span>`).filter(Boolean);
@@ -1296,13 +1281,11 @@ TICKER_HTML = """
                 const news = await response.json();
                 renderTickerContent(news);
             } catch (e) {
-                // Never leave the viewer seeing "جاري التحميل..." if the news API is unavailable.
                 renderTickerContent([]);
                 console.error('BASHAN ticker news error:', e);
             }
         }
 
-        // Render visible fallback immediately, then replace it when news loads.
         renderTickerContent([]);
         loadAssets(); checkLiveState(); updateTickers();
         setInterval(checkLiveState, 400);
@@ -1318,18 +1301,17 @@ def get_ticker():
 
 @app.get("/api/approved_news")
 def get_approved_news():
-    """Return separate approved lists: manual top ticker and RSS-only bottom ticker."""
     top_items = []
     bottom_items = []
     conn = sqlite3.connect(DB_NAME)
     try:
         cursor = conn.cursor()
-        # Only manually entered headlines can appear in the top ticker.
-        cursor.execute("SELECT title, category, source_name FROM news WHERE lower(trim(status)) = 'approved' AND (source_name = 'لوحة البث' OR ((source_name IS NULL OR TRIM(source_name) = '' OR LOWER(source_name) IN ('يدوي','manual','manual entry','السويداء')) AND LOWER(TRIM(COALESCE(category,''))) IN ('السويداء','أخبار السويداء','محلي','محلية'))) ORDER BY id DESC LIMIT 80")
+        # الشريط العلوي يعرض حصراً الأخبار المضافة يدوياً
+        cursor.execute("SELECT title, category, source_name FROM news WHERE lower(trim(status)) = 'approved' AND source_name = 'لوحة البث' ORDER BY id DESC LIMIT 80")
         for title, category, source_name in cursor.fetchall():
             if title and str(title).strip():
                 top_items.append({"title": str(title).strip(), "category": str(category or "السويداء").strip(), "source_name": "لوحة البث"})
-        # Only approved automatically fetched source items can appear in the bottom ticker.
+        # الشريط السفلي يعرض حصراً الأخبار المسحوبة من المواقع الخارجية (RSS)
         cursor.execute("SELECT title, category, source_name FROM news WHERE lower(trim(status)) = 'approved' AND source_name IS NOT NULL AND source_name <> 'لوحة البث' ORDER BY id DESC LIMIT 150")
         for title, category, source_name in cursor.fetchall():
             if title and str(title).strip():
