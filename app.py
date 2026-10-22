@@ -1,4 +1,4 @@
- import os
+import os
 import sqlite3
 import secrets
 import feedparser
@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from apscheduler.schedulers.background import BackgroundScheduler
+from jinja2 import Template
 import uvicorn
 
 # --- 1. إعداد قواعد البيانات والملفات ---
@@ -68,23 +69,26 @@ def init_db():
     conn.close()
 
 def fetch_global_news():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, url, category FROM sources")
-    sources = cursor.fetchall()
-    keywords = ["عاجل", "الشرق الأوسط", "سوريا", "اتفاق", "تصعيد", "هدنة", "اقتصاد", "بورصة", "أسهم", "النفط", "الذهب", "الدولار", "الفائدة", "التضخم", "برج", "الأبراج", "حظك اليوم", "الفلك"]
-    
-    for name, url, category in sources:
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:8]:
-                title = entry.title.strip()
-                if any(kw in title for kw in keywords) or category in ["اقتصاد", "بورصة", "أبراج"]:
-                    cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name) VALUES (?, ?, ?)", (title, category, name))
-        except Exception:
-            pass
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, url, category FROM sources")
+        sources = cursor.fetchall()
+        keywords = ["عاجل", "الشرق الأوسط", "سوريا", "اتفاق", "تصعيد", "هدنة", "اقتصاد", "بورصة", "أسهم", "النفط", "الذهب", "الدولار", "الفائدة", "التضخم", "برج", "الأبراج", "حظك اليوم", "الفلك"]
+        
+        for name, url, category in sources:
+            try:
+                feed = feedparser.parse(url)
+                for entry in feed.entries[:8]:
+                    title = entry.title.strip()
+                    if any(kw in title for kw in keywords) or category in ["اقتصاد", "بورصة", "أبراج"]:
+                        cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name) VALUES (?, ?, ?)", (title, category, name))
+            except Exception:
+                pass
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 app = FastAPI(title="BASHAN LINE Engine")
 app.mount("/music", StaticFiles(directory=UPLOAD_DIR), name="music")
@@ -117,7 +121,6 @@ def get_images():
 def get_live_state():
     return CURRENT_STATE
 
-# --- 3. لوحة التحكم الإدارية ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -246,7 +249,6 @@ def admin_panel(username: str = Depends(verify_admin)):
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
     video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
     
-    from jinja2 import Template
     return Template(ADMIN_HTML).render(
         news=pending_news, music_files=music_files, video_files=video_files, 
         current_banner=CURRENT_STATE["breaking_banner"],
@@ -305,6 +307,7 @@ def approve_news(news_id: int, username: str = Depends(verify_admin)):
     cursor = conn.cursor()
     cursor.execute("UPDATE news SET status = 'approved' WHERE id = ?", (news_id,))
     conn.commit()
+    conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.get("/approve_all")
@@ -313,6 +316,7 @@ def approve_all_news(username: str = Depends(verify_admin)):
     cursor = conn.cursor()
     cursor.execute("UPDATE news SET status = 'approved' WHERE status = 'pending'")
     conn.commit()
+    conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.get("/reject/{news_id}")
@@ -321,9 +325,9 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM news WHERE id = ?", (news_id,))
     conn.commit()
+    conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- 4. واجهة البث المباشر (تلقائية بالكامل وبدون أزرار) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
