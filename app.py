@@ -29,10 +29,10 @@ if os.path.exists(VIDEOS_DIR):
         default_vid_file = f"/videos/{vids[0]}"
 
 CURRENT_STATE = {
-    "media_type": "video",
+    "media_type": "youtube",  # البدء تلقائياً بوضع يوتيوب
     "active_song": "",
     "active_video": default_vid_file,
-    "youtube_url": "",
+    "youtube_url": "https://www.youtube.com/watch?v=5qap5aO4i9A",  # رابط افتراضي مبدئي
     "breaking_banner": "",
     "sweida_speed": 90,
     "world_speed": 90
@@ -185,7 +185,7 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث المباشر (/admin) ---
+# --- 3. لوحة تحكم البث المباشر والأخبار (/admin) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -198,17 +198,18 @@ ADMIN_HTML = """
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .card { background: #121824; padding: 20px; border-radius: 8px; border: 1px solid #1e293b; margin-bottom: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 10px; text-align: right; border-bottom: 1px solid #1e293b; font-size: 14px; }
+        th, td { padding: 10px; text-align: right; border-bottom: 1px solid #1e293b; font-size: 13px; }
         th { background: #1a2332; color: #d4af37; }
-        .btn { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px; }
+        .btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 3px; }
         .btn-approve { background: #2e7d32; color: white; }
         .btn-reject { background: #c62828; color: white; }
+        .btn-edit { background: #1d4ed8; color: white; text-decoration: none; display: inline-block; padding: 6px 12px; border-radius: 4px; }
         input, textarea, select { width: 100%; padding: 10px; background: #1a2332; color: #fff; border: 1px solid #2a364f; border-radius: 4px; box-sizing: border-box; margin-bottom: 10px; }
         .badge { padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
     </style>
 </head>
 <body>
-    <h1>BASHAN LINE — لوحة تحكم البث المباشر 🔒</h1>
+    <h1>BASHAN LINE — لوحة تحكم البث المباشر والأخبار 🔒</h1>
     <div style="margin-bottom: 15px;">
         <a href="/news/admin" style="background: #7b1fa2; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">📰 الانتقال إلى لوحة تحكم الموقع الإخباري</a>
     </div>
@@ -216,17 +217,17 @@ ADMIN_HTML = """
         <div>
             <div class="card" style="border: 2px solid #3b82f6;">
                 <h2 style="color: #60a5fa;">📺 وضع العرض على الشاشة</h2>
-                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:32%; padding:10px;">عرض الصور 🖼️</button></a>
-                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:32%; padding:10px;">الفيديوهات 🎬</button></a>
+                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:31%; padding:10px;">عرض الصور 🖼️</button></a>
+                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:31%; padding:10px;">الفيديوهات 🎬</button></a>
                 <a href="/admin/clear_stage"><button class="btn" style="background:#c62828; color:#fff; width:30%; padding:10px;">إيقاف الكل ❌</button></a>
             </div>
 
             <div class="card" style="border: 2px solid #ff0000;">
-                <h2 style="color: #ff4444;">▶️ عرض فيديو أو بث يوتيوب مباشر</h2>
+                <h2 style="color: #ff4444;">▶️ رابط البث المباشر (يوتيوب)</h2>
                 <form action="/set_youtube_video" method="post">
-                    <label>ضع رابط يوتيوب أو البث هنا:</label>
-                    <input type="text" name="youtube_url" placeholder="https://www.youtube.com/watch?v=XXXXX" required>
-                    <button type="submit" class="btn" style="background:#ff0000; color:#fff; width:100%;">عرض المباشر فوراً 🚀</button>
+                    <label>ضع رابط يوتيوب أو البث المباشر هنا:</label>
+                    <input type="text" name="youtube_url" value="{{ current_youtube }}" placeholder="https://www.youtube.com/watch?v=XXXXX" required>
+                    <button type="submit" class="btn" style="background:#ff0000; color:#fff; width:100%;">تحديث وعرض المباشر فوراً 🚀</button>
                 </form>
             </div>
 
@@ -258,28 +259,6 @@ ADMIN_HTML = """
                 </form>
             </div>
 
-            <div class="card">
-                <h2>🎬 اختيار الفيديو المبدئي للبث</h2>
-                <form action="/set_active_video" method="post">
-                    <select name="video_name" required>
-                        {% for vid in video_files %}<option value="{{ vid }}">{{ vid }}</option>{% endfor %}
-                    </select><br>
-                    <button type="submit" class="btn btn-approve" style="width:100%;">تحديد الفيديو الأساسي</button>
-                </form>
-            </div>
-
-            <div class="card" style="border: 2px solid #2e7d32;">
-                <h2 style="color: #4ade80;">🎵 إدارة وتشغيل الموسيقى (مع الصور)</h2>
-                <form action="/set_active_song" method="post">
-                    <select name="song_name" required>
-                        <option value="AUTO_PLAYLIST">تشغيل كافة الأغاني بالتتابع تلقائياً 🔄</option>
-                        <option value="">إيقاف الموسيقى ❌</option>
-                        {% for song in music_files %}<option value="{{ song }}">{{ song }}</option>{% endfor %}
-                    </select><br>
-                    <button type="submit" class="btn btn-approve" style="width:100%;">تفعيل الموسيقى والانتقال للصور</button>
-                </form>
-            </div>
-
             <div class="card" style="border: 2px solid #c62828;">
                 <h2 style="color: #ff5252;">🚨 نشر خبر عاجل بارز</h2>
                 <form action="/set_breaking_banner" method="post">
@@ -305,10 +284,11 @@ ADMIN_HTML = """
                 </form>
             </div>
 
+            <!-- جدول إدارة، تعديل، وحذف أخبار الشريطين -->
             <div class="card">
-                <h2>إدارة وحذف أخبار الشريطين (الأول والثاني)</h2>
+                <h2>إدارة، تعديل، وحذف أخبار الشريطين</h2>
                 <table>
-                    <tr><th>التصنيف والشريط</th><th>الخبر</th><th>الإجراء</th></tr>
+                    <tr><th>الشريط</th><th>الخبر</th><th>الإجراءات</th></tr>
                     {% for item in news %}
                     <tr>
                         <td>
@@ -318,12 +298,8 @@ ADMIN_HTML = """
                         </td>
                         <td>{{ item[1] }}</td>
                         <td style="white-space:nowrap;">
-                            {% if item[4] == 'pending' %}
-                            <a href="/approve/{{ item[0] }}"><button class="btn btn-approve" style="padding:4px 8px; font-size:11px;">اعتماد</button></a>
-                            {% else %}
-                            <span style="color:#4ade80; font-weight:bold; font-size:11px;">معتمد ✓</span>
-                            {% endif %}
-                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:4px 8px; font-size:11px;">حذف 🗑️</button></a>
+                            <a href="/admin/edit_news/{{ item[0] }}"><button class="btn btn-edit" style="padding:3px 8px; font-size:11px;">تعديل ✏️</button></a>
+                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:3px 8px; font-size:11px;">حذف 🗑️</button></a>
                         </td>
                     </tr>
                     {% endfor %}
@@ -335,11 +311,46 @@ ADMIN_HTML = """
 </html>
 """
 
+# --- صفحة تعديل الخبر الفردي ---
+EDIT_NEWS_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>تعديل الخبر - BASHAN</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #080b14; color: #eaeaea; margin: 0; padding: 40px; }
+        .card { background: #121824; padding: 30px; border-radius: 8px; border: 1px solid #1e293b; max-width: 600px; margin: 0 auto; }
+        h1 { color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px; }
+        input, select, textarea { width: 100%; padding: 10px; background: #1a2332; color: #fff; border: 1px solid #2a364f; border-radius: 4px; box-sizing: border-box; margin-bottom: 15px; }
+        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-save { background: #2e7d32; color: white; width: 100%; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>✏️ تعديل نص أو تصنيف الخبر</h1>
+        <form action="/admin/update_news/{{ news_item[0] }}" method="post">
+            <label>نص الخبر:</label>
+            <textarea name="title" rows="3" required>{{ news_item[1] }}</textarea>
+            <label>التصنيف (الشريط):</label>
+            <select name="category">
+                <option value="السويداء" {% if news_item[2] == 'السويداء' %}selected{% endif %}>أخبار السويداء (شريط علوي)</option>
+                <option value="عالمي" {% if news_item[2] == 'عالمي' %}selected{% endif %}>أخبار عالمية (شريط سفلي)</option>
+            </select>
+            <button type="submit" class="btn btn-save">حفظ التعديلات ✓</button>
+        </form>
+        <br><a href="/admin" style="color: #60a5fa; text-decoration: none;">← العودة لوحة التحكم</a>
+    </div>
+</body>
+</html>
+"""
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category, source_name, status FROM news ORDER BY id DESC LIMIT 50")
+    cursor.execute("SELECT id, title, category, source_name, status FROM news ORDER BY id DESC LIMIT 60")
     news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
@@ -348,8 +359,29 @@ def admin_panel(username: str = Depends(verify_admin)):
         news=news, music_files=music_files, video_files=video_files, 
         current_banner=CURRENT_STATE["breaking_banner"],
         sweida_speed=CURRENT_STATE["sweida_speed"],
-        world_speed=CURRENT_STATE["world_speed"]
+        world_speed=CURRENT_STATE["world_speed"],
+        current_youtube=CURRENT_STATE["youtube_url"]
     )
+
+@app.get("/admin/edit_news/{news_id}", response_class=HTMLResponse)
+def edit_news_page(news_id: int, username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, category FROM news WHERE id = ?", (news_id,))
+    news_item = cursor.fetchone()
+    conn.close()
+    if not news_item:
+        return HTMLResponse("الخبر غير موجود", status_code=404)
+    return Template(EDIT_NEWS_HTML).render(news_item=news_item)
+
+@app.post("/admin/update_news/{news_id}")
+def update_news(news_id: int, title: str = Form(...), category: str = Form(...), username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE news SET title = ?, category = ? WHERE id = ?", (title, category, news_id))
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/admin/add_ticker_news")
 def add_ticker_news(title: str = Form(...), category: str = Form(...), username: str = Depends(verify_admin)):
@@ -372,13 +404,11 @@ def approve_news(news_id: int, username: str = Depends(verify_admin)):
 @app.get("/switch_to_images")
 def switch_to_images(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "image"
-    CURRENT_STATE["youtube_url"] = ""
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.get("/switch_to_video")
 def switch_to_video(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
-    CURRENT_STATE["youtube_url"] = ""
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.get("/admin/clear_stage")
@@ -417,7 +447,6 @@ def clear_breaking_banner(username: str = Depends(verify_admin)):
 @app.post("/set_active_video")
 def set_active_video(video_name: str = Form(...), username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
-    CURRENT_STATE["youtube_url"] = ""
     CURRENT_STATE["active_video"] = f"/videos/{video_name}"
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
@@ -443,7 +472,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. واجهة البث المباشر الموحد المتزامن ---
+# --- 4. واجهة البث المباشر الموحد المتزامن (تشغيل فوري مباشر) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -452,27 +481,27 @@ TICKER_HTML = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BASHAN LINE - البث المباشر</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; user-select: none; pointer-events: none; }
-        .corner-logo { position: absolute; top: 65px; right: 15px; z-index: 100; width: 130px; filter: drop-shadow(0px 4px 15px rgba(0,0,0,0.8)); }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; user-select: none; }
+        .corner-logo { position: absolute; top: 65px; right: 15px; z-index: 100; width: 130px; filter: drop-shadow(0px 4px 15px rgba(0,0,0,0.8)); pointer-events: none; }
         .corner-logo img { width: 100%; height: auto; }
-        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
+        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; pointer-events: none; }
         .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; box-sizing: border-box; padding: 15px; }
         .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; transition: background-image 1.2s ease-in-out; position: relative; }
         video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); object-fit: contain; background-color: #000; pointer-events: none; }
-        .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-color: #000; pointer-events: none; }
-        .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; }
-        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
+        .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-color: #000; }
+        .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
+        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; pointer-events: none; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
         .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 17px; color: #ffffff; }
         .ticker-item { display: inline-block; padding: 0 20px; }
-        #touch-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: transparent; cursor: pointer; pointer-events: auto; }
+        #touch-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: transparent; cursor: pointer; }
         @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(100%, 0, 0); } }
     </style>
 </head>
 <body>
-    <div id="touch-overlay"></div>
+    <div id="touch-overlay" onclick="enableAudioAndPlay()"></div>
     <div class="corner-logo"><img src="/logo.png" alt="Logo"></div>
     <div class="top-ticker-container">
         <div class="top-ticker-title">أخبار السويداء</div>
@@ -489,15 +518,15 @@ TICKER_HTML = """
         let imageList = [], songList = [], videoList = [], currentSongPath = "", isAudioUnlocked = false, lastMediaType = "";
         const audioPlayer = document.getElementById('audio-player');
 
-        function unlockAudio() {
-            if (isAudioUnlocked) return;
-            const vid = document.getElementById('live-video');
-            if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
-            if (audioPlayer && audioPlayer.src) { audioPlayer.muted = false; audioPlayer.play().catch(()=>{}); }
+        function enableAudioAndPlay() {
             isAudioUnlocked = true;
             document.getElementById('touch-overlay').style.display = 'none';
+            const iframe = document.getElementById('youtube-frame');
+            if (iframe) {
+                // إعادة تنشيط الإطار لضمان عمل البث والصوت فور النقر على الشاشة الأولى
+                iframe.src = iframe.src;
+            }
         }
-        document.getElementById('touch-overlay').addEventListener('click', unlockAudio);
 
         async function loadAssets() {
             try {
@@ -519,40 +548,11 @@ TICKER_HTML = """
             } else if (url.includes('youtube.com/live/')) {
                 videoId = url.split('live/')[1]?.split('?')[0];
             } else {
-                videoId = url.trim(); // إذا كان المعرف وحده مباشرة
+                videoId = url.trim();
             }
             if (!videoId) return "";
+            // معاملات تضمن التشغيل الفوري المباشر وإخفاء الشعار وأزرار التحكم
             return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`;
-        }
-
-        function syncAudioSync(serverTime, activeSongSetting) {
-            if (songList.length === 0) return;
-            let targetSongUrl = "";
-            let songOffset = 0;
-            if (activeSongSetting === "AUTO_PLAYLIST") {
-                const songDuration = 200;
-                let totalPlaylistDuration = songList.length * songDuration;
-                let playlistTime = serverTime % totalPlaylistDuration;
-                let songIndex = Math.floor(playlistTime / songDuration);
-                songOffset = playlistTime % songDuration;
-                targetSongUrl = songList[songIndex];
-            } else {
-                targetSongUrl = activeSongSetting;
-                songOffset = serverTime % (audioPlayer.duration || 200);
-            }
-            if (currentSongPath !== targetSongUrl) {
-                currentSongPath = targetSongUrl;
-                audioPlayer.src = targetSongUrl;
-                audioPlayer.currentTime = songOffset;
-                audioPlayer.play().then(() => { audioPlayer.muted = false; }).catch(() => {});
-            } else {
-                if (Math.abs(audioPlayer.currentTime - songOffset) > 1.2) {
-                    audioPlayer.currentTime = songOffset;
-                }
-                if (audioPlayer.paused) {
-                    audioPlayer.play().catch(() => {});
-                }
-            }
         }
 
         async function checkLiveState() {
@@ -574,8 +574,8 @@ TICKER_HTML = """
                 if(state.media_type === 'youtube' && state.youtube_url) {
                     let embedUrl = getYoutubeEmbedUrl(state.youtube_url);
                     if(embedUrl) {
-                        if(lastMediaType !== 'youtube' || !document.getElementById('youtube-frame') || document.getElementById('youtube-frame').src !== embedUrl) {
-                            stage.innerHTML = `<iframe id="youtube-frame" class="youtube-card" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
+                        if(lastMediaType !== 'youtube' || !document.getElementById('youtube-frame') || document.getElementById('youtube-frame').getAttribute('data-url') !== state.youtube_url) {
+                            stage.innerHTML = `<iframe id="youtube-frame" class="youtube-card" data-url="${state.youtube_url}" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
                             lastMediaType = 'youtube';
                         }
                     }
@@ -595,12 +595,6 @@ TICKER_HTML = """
                             lastMediaType = 'video';
                             vidEl = document.getElementById('live-video');
                         }
-                        if (vidEl && vidEl.duration) {
-                            let targetVideoTime = totalPlaylistTime % totalDurationPerVideo;
-                            if (Math.abs(vidEl.currentTime - targetVideoTime) > 1.5) {
-                                vidEl.currentTime = targetVideoTime;
-                            }
-                        }
                     }
                     audioPlayer.pause();
                     currentSongPath = "";
@@ -618,12 +612,6 @@ TICKER_HTML = """
                     if(imageList.length > 0) {
                         const idx = Math.floor(serverTime / 6) % imageList.length;
                         document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
-                    }
-                    if(state.active_song) {
-                        syncAudioSync(serverTime, state.active_song);
-                    } else {
-                        audioPlayer.pause();
-                        currentSongPath = "";
                     }
                 }
             } catch(e){}
@@ -829,17 +817,17 @@ PORTAL_MAIN_HTML = """
         <div class="nav-links">
             <a href="/news?lang=ar" class="{% if current_lang == 'ar' %}active{% endif %}">العربية</a>
             <a href="/news?lang=en" class="{% if current_lang == 'en' %}active{% endif %}">English</a>
-            <a href="/news?lang=he" class="{% if current_lang == 'he' %}active{% endif %}">עברית</a>
+            <a href="/news?lang=he" class="{% if current_lang == 'en' %}active{% endif %}">עברית</a>
             <a href="/ticker" class="live-btn" target="_blank">🔴 البث المباشر</a>
         </div>
     </header>
     <div class="container">
         <div class="grid-news">
             {% for item in articles %}
-            <article-card>
+            <div class="article-card">
                 <h3><a href="/news/read/{{ item.id }}?lang={{ current_lang }}">{{ item.title }}</a></h3>
                 <p style="color:#9ca3af; font-size:14px;">{{ item.content[:160] }}...</p>
-            </article-card>
+            </div>
             {% endfor %}
         </div>
     </div>
