@@ -123,10 +123,17 @@ def get_images():
         return [f"/images/{f}" for f in files]
     return []
 
+@app.get("/api/get_songs")
+def get_songs():
+    if os.path.exists(UPLOAD_DIR):
+        files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))]
+        return [f"/music/{f}" for f in files]
+    return []
+
 @app.get("/api/live_state")
 def get_live_state():
     state = CURRENT_STATE.copy()
-    state["server_time"] = time.time()  # توقيت السيرفر بالثواني لتوحيد العرض عالمياً
+    state["server_time"] = time.time()
     return state
 
 # --- 3. لوحة التحكم الإدارية ---
@@ -204,12 +211,13 @@ ADMIN_HTML = """
                 <h2>🎵 تشغيل الموسيقى الخلفية (مع الصور)</h2>
                 <form action="/set_active_song" method="post">
                     <select name="song_name" required>
+                        <option value="AUTO_PLAYLIST">تشغيل جميع الأغاني بالتتابع تلقائياً 🔄</option>
                         <option value="">إيقاف الموسيقى ❌</option>
                         {% for song in music_files %}
                         <option value="{{ song }}">{{ song }}</option>
                         {% endfor %}
                     </select><br><br>
-                    <button type="submit" class="btn btn-approve" style="width: 100%;">تشغيل وانتقال للصور</button>
+                    <button type="submit" class="btn btn-approve" style="width: 100%;">تفعيل الموسيقى والانتقال للصور</button>
                 </form>
             </div>
             
@@ -303,7 +311,10 @@ def set_active_video(video_name: str = Form(...), username: str = Depends(verify
 
 @app.post("/set_active_song")
 def set_active_song(song_name: str = Form(None), username: str = Depends(verify_admin)):
-    if song_name:
+    if song_name == "AUTO_PLAYLIST":
+        CURRENT_STATE["media_type"] = "image"
+        CURRENT_STATE["active_song"] = "AUTO_PLAYLIST"
+    elif song_name:
         CURRENT_STATE["media_type"] = "image" 
         CURRENT_STATE["active_song"] = f"/music/{song_name}"
     else:
@@ -337,39 +348,62 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- 4. واجهة البث المباشر (تزامن عالمي موحد للجميع 100%) ---
+# --- 4. واجهة البث المباشر (متجاوبة ومتطورة للموبايل والحاسوب) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BASHAN LINE - البث المباشر الموحد</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; cursor: default; }
-        .corner-logo { position: absolute; top: 75px; right: 25px; z-index: 100; width: 170px; filter: drop-shadow(0px 4px 15px rgba(0,0,0,0.8)); }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; user-select: none; }
+        
+        /* الشعار للموبايل والحاسوب */
+        .corner-logo { position: absolute; top: 65px; right: 15px; z-index: 100; width: 130px; filter: drop-shadow(0px 4px 15px rgba(0,0,0,0.8)); }
         .corner-logo img { width: 100%; height: auto; }
         
-        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 60px; background: rgba(20, 10, 30, 0.98); border-bottom: 3px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
-        .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 25px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 20px; white-space: nowrap; }
+        /* شريط الأخبار العلوي */
+        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
+        .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         
-        .center-stage { position: absolute; top: 60px; left: 0; width: 100%; height: calc(100% - 120px); display: flex; justify-content: center; align-items: center; z-index: 10; }
+        /* المسرح الرئيسي للحاسوب والموبايل */
+        .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; }
         
-        .image-card { width: 82%; height: 82%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-size: cover; background-position: center; transition: background-image 1.2s ease-in-out; position: relative; }
-        video.video-card { width: 82%; height: 82%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); object-fit: cover; pointer-events: none; }
+        .image-card { width: 92%; height: 88%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-size: cover; background-position: center; transition: background-image 1.2s ease-in-out; position: relative; }
+        video.video-card { width: 92%; height: 88%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); object-fit: cover; pointer-events: none; }
         
-        .breaking-banner { position: absolute; bottom: 60px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 8px 25px; box-sizing: border-box; font-size: 20px; font-weight: 900; z-index: 999; box-shadow: 0 -4px 15px rgba(229, 9, 20, 0.6); display: none; align-items: center; border-top: 2px solid #ffeb3b; }
+        /* الخبر العاجل */
+        .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; box-shadow: 0 -4px 15px rgba(229, 9, 20, 0.6); display: none; align-items: center; border-top: 2px solid #ffeb3b; }
         
-        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 60px; background: rgba(8, 11, 20, 0.98); border-top: 3px solid #d4af37; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
-        .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 25px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 20px; white-space: nowrap; }
+        /* شريط الأخبار السفلي */
+        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
+        .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         
         .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
-        .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 20px; color: #ffffff; }
-        .ticker-item { display: inline-block; padding: 0 25px; }
+        .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 17px; color: #ffffff; }
+        .ticker-item { display: inline-block; padding: 0 20px; }
+
+        /* طبقة تفاعلية غير مرئية لفك حظر الصوت على الموبايل */
+        #touch-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: transparent; cursor: pointer; }
+
+        /* إعدادات الشاشة للشاشات الكبيرة (لابتوب وتلفزيون) */
+        @media (min-width: 768px) {
+            .corner-logo { width: 170px; top: 75px; right: 25px; }
+            .top-ticker-container, .ticker-container { height: 60px; }
+            .center-stage { top: 60px; height: calc(100% - 120px); }
+            .breaking-banner { bottom: 60px; font-size: 20px; }
+            .top-ticker-title, .ticker-title { font-size: 20px; padding: 0 25px; }
+            .ticker-move { font-size: 20px; }
+            .image-card, video.video-card { width: 82%; height: 82%; }
+        }
 
         @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(100%, 0, 0); } }
     </style>
 </head>
 <body>
+    <div id="touch-overlay"></div>
+
     <div class="corner-logo"><img src="/logo.png" alt="BASHAN LINE Logo"></div>
 
     <div class="top-ticker-container">
@@ -384,7 +418,7 @@ TICKER_HTML = """
     <audio id="audio-player" style="display:none;" autoplay></audio>
 
     <div class="breaking-banner" id="breaking-banner">
-        <span style="background:#000; color:#ffeb3b; padding:2px 8px; border-radius:4px; margin-left:12px; font-size:16px;">🔴 عاجل</span>
+        <span style="background:#000; color:#ffeb3b; padding:2px 8px; border-radius:4px; margin-left:12px; font-size:14px;">🔴 عاجل</span>
         <span id="breaking-text"></span>
     </div>
 
@@ -395,22 +429,34 @@ TICKER_HTML = """
 
     <script>
         let imageList = [];
-        let lastPlayedSong = "";
-        let currentVideoSrc = "";
+        let songList = [];
         let currentMediaType = "";
+        let currentVideoSrc = "";
+        let isAudioUnlocked = false;
 
-        // تفعيل الصوت المباشر بدون أزرار مع أول تفاعل خفيف على الشاشة
-        document.addEventListener('click', () => {
+        // فك حظر الصوت فوراً مع أول لمسة شاشة للموبايل
+        function unlockAudio() {
+            if (isAudioUnlocked) return;
             const vid = document.getElementById('live-video');
-            if(vid) vid.muted = false;
+            if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
             const aud = document.getElementById('audio-player');
-            if(aud) aud.muted = false;
-        }, { once: true });
+            if (aud) { aud.muted = false; aud.play().catch(()=>{}); }
+            
+            isAudioUnlocked = true;
+            const overlay = document.getElementById('touch-overlay');
+            if (overlay) overlay.style.display = 'none';
+        }
 
-        async function loadImages() {
+        document.getElementById('touch-overlay').addEventListener('click', unlockAudio);
+        document.getElementById('touch-overlay').addEventListener('touchstart', unlockAudio);
+
+        async function loadAssets() {
             try {
-                const res = await fetch('/api/get_images');
-                imageList = await res.json();
+                const resImg = await fetch('/api/get_images');
+                imageList = await resImg.json();
+                
+                const resSong = await fetch('/api/get_songs');
+                songList = await resSong.json();
             } catch (e) {}
         }
 
@@ -420,7 +466,7 @@ TICKER_HTML = """
                 const state = await res.json();
                 const serverTime = state.server_time || (Date.now() / 1000);
                 
-                // 1. تزامن حركة الأشرطة الأخبارية بحسب زمن السيرفر
+                // 1. أشرطة الأخبار المتزامنة
                 const topMove = document.getElementById('top-ticker-content');
                 const bottomMove = document.getElementById('ticker-content');
                 
@@ -433,7 +479,7 @@ TICKER_HTML = """
                     bottomMove.style.animationDelay = `-${serverTime % state.world_speed}s`;
                 }
 
-                // 2. شريط العاجل
+                // 2. الخبر العاجل
                 const banner = document.getElementById('breaking-banner');
                 if(state.breaking_banner && state.breaking_banner.trim() !== "") {
                     document.getElementById('breaking-text').innerText = state.breaking_banner;
@@ -445,7 +491,7 @@ TICKER_HTML = """
                 const stage = document.getElementById('stage-container');
                 const audioPlayer = document.getElementById('audio-player');
 
-                // 3. تزامن الفيديو الموحد عالمياً
+                // 3. الفيديو التفاعلي مع خيار الصوت
                 if (state.media_type === 'video') {
                     if (currentMediaType !== 'video' || currentVideoSrc !== state.active_video) {
                         currentMediaType = 'video';
@@ -458,13 +504,12 @@ TICKER_HTML = """
                     const vid = document.getElementById('live-video');
                     if(vid && vid.duration) {
                         const targetTime = serverTime % vid.duration;
-                        // إعادة ضبط زمن الفيديو إذا زاد الفارق عن ثانية واحدة فقط بين المشاهد والسيرفر
                         if(Math.abs(vid.currentTime - targetTime) > 1.5) {
                             vid.currentTime = targetTime;
                         }
                     }
                 } 
-                // 4. تزامن معرض الصور الموحد عالمياً (تتغير كل 6 ثوانٍ بدقة متطابقة للجميع)
+                // 4. الصور + تشغيل قائمة الأغاني بالتتابع
                 else if (state.media_type === 'image') {
                     if (currentMediaType !== 'image') {
                         currentMediaType = 'image';
@@ -479,21 +524,21 @@ TICKER_HTML = """
                         }
                     }
 
-                    if (state.active_song !== lastPlayedSong) {
-                        lastPlayedSong = state.active_song;
-                        if (state.active_song) {
+                    // إدارة الأغاني والتشغيل المتتابع
+                    if (state.active_song === "AUTO_PLAYLIST" && songList.length > 0) {
+                        const songIndex = Math.floor(serverTime / 180) % songList.length;
+                        const targetSong = songList[songIndex];
+                        if (audioPlayer.src !== window.location.origin + targetSong) {
+                            audioPlayer.src = targetSong;
+                            audioPlayer.play().catch(()=>{});
+                        }
+                    } else if (state.active_song && state.active_song !== "AUTO_PLAYLIST") {
+                        if (audioPlayer.src !== window.location.origin + state.active_song) {
                             audioPlayer.src = state.active_song;
-                        } else {
-                            audioPlayer.src = "";
-                            audioPlayer.pause();
+                            audioPlayer.play().catch(()=>{});
                         }
-                    }
-
-                    if (state.active_song && audioPlayer.audioTracks) {
-                        const targetAudioTime = serverTime % (audioPlayer.duration || 1);
-                        if(Math.abs(audioPlayer.currentTime - targetAudioTime) > 2) {
-                            audioPlayer.currentTime = targetAudioTime;
-                        }
+                    } else if (!state.active_song) {
+                        audioPlayer.pause();
                     }
                 }
 
@@ -514,7 +559,7 @@ TICKER_HTML = """
             } catch (e) {}
         }
 
-        loadImages();
+        loadAssets();
         checkLiveState();
         updateTickers();
         setInterval(checkLiveState, 1000);
