@@ -64,12 +64,20 @@ def init_dbs():
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
-        # Keep existing Sky News Arabia source updated and add an economy feed.
-        cursor.execute("UPDATE sources SET url = ? WHERE name = ?", ("https://www.skynewsarabia.com/rss.xml", "Sky News Arabia"))
+        # RSS sources for the bottom ticker only. Every fetched headline is pending
+        # until the admin approves it. Google News RSS is used for outlets without
+        # a reliably available public RSS endpoint (e.g. Reuters / i24NEWS).
         default_sources = [
+            ("BBC News عربي", "https://feeds.bbci.co.uk/arabic/rss.xml", "عالمي"),
+            ("Reuters عبر Google News", "https://news.google.com/rss/search?q=site%3Areuters.com&hl=ar&gl=AE&ceid=AE%3Aar", "صحافة عالمية"),
             ("Sky News Arabia", "https://www.skynewsarabia.com/rss.xml", "عالمي"),
-            ("RT Arabic", "https://arabic.rt.com/rss/", "عالمي"),
-            ("Alikhbariya Economy", "https://alikhbariya.net/feeds/topics/economy.xml", "اقتصاد")
+            ("i24NEWS عربي عبر Google News", "https://news.google.com/rss/search?q=site%3Ai24news.tv%2Far&hl=ar&gl=IL&ceid=IL%3Aar", "عالمي"),
+            ("BBC عربي - اقتصاد", "https://feeds.bbci.co.uk/arabic/business/rss.xml", "اقتصاد"),
+            ("اقتصاد عالمي", "https://news.google.com/rss/search?q=%D8%A3%D8%AE%D8%A8%D8%A7%D8%B1+%D8%A7%D9%82%D8%AA%D8%B5%D8%A7%D8%AF%D9%8A%D8%A9&hl=ar&gl=AE&ceid=AE%3Aar", "اقتصاد"),
+            ("الأبراج اليومية", "https://news.google.com/rss/search?q=%D8%AA%D9%88%D9%82%D8%B9%D8%A7%D8%AA+%D8%A7%D9%84%D8%A3%D8%A8%D8%B1%D8%A7%D8%AC+%D8%A7%D9%84%D9%8A%D9%88%D9%85&hl=ar&gl=AE&ceid=AE%3Aar", "أبراج"),
+            ("الصحافة العالمية", "https://www.theguardian.com/world/rss", "صحافة عالمية"),
+            ("DW عربي", "https://rss.dw.com/xml/rss-ar-all", "عالمي"),
+            ("France 24", "https://www.france24.com/ar/rss", "صحافة عالمية")
         ]
         cursor.executemany("INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)", default_sources)
         conn.commit()
@@ -98,7 +106,6 @@ def init_dbs():
             category TEXT,
             language TEXT DEFAULT 'ar'
         )''')
-        cursor_p.execute("UPDATE portal_sources SET url = ? WHERE name IN (?, ?)", ("https://www.skynewsarabia.com/rss.xml", "Sky News", "Sky News Arabia"))
         default_portal_sources = [
             ("Sky News Arabia", "https://www.skynewsarabia.com/rss.xml", "عالمي", "ar"),
             ("RT Arabic", "https://arabic.rt.com/rss/", "عالمي", "ar")
@@ -118,7 +125,9 @@ def fetch_portal_news():
             try:
                 feed = feedparser.parse(url)
                 for entry in feed.entries[:5]:
-                    title = entry.title.strip()
+                    title = str(getattr(entry, 'title', '') or '').strip()
+                    if not title:
+                        continue
                     cursor.execute("SELECT id FROM news WHERE title = ?", (title,))
                     if not cursor.fetchone():
                         cursor.execute("INSERT INTO news (title, category, source_name, status) VALUES (?, ?, ?, 'pending')", (title, category, name))
@@ -395,10 +404,8 @@ ADMIN_HTML = """
                 <h2 style="color: #d4af37;">✍️ إضافة خبر جديد للشريط يدوياً</h2>
                 <form action="/admin/add_ticker_news" method="post">
                     <input type="text" name="title" placeholder="اكتب نص الخبر..." required>
-                    <select name="category">
-                        <option value="السويداء">أخبار السويداء (شريط علوي 🟣)</option>
-                        <option value="عالمي">أخبار عالمية (شريط سفلي ⚡)</option>
-                    </select><br>
+                    <input type="hidden" name="category" value="السويداء">
+                    <p style="color:#c4b5fd;font-size:13px;margin-top:0;">هذا الحقل ينشر الخبر يدوياً في الشريط العلوي فقط.</p>
                     <button type="submit" class="btn btn-approve" style="width:100%;">نشر مباشر 🚀</button>
                 </form>
             </div>
@@ -426,7 +433,7 @@ ADMIN_HTML = """
 
             <!-- قسم مستقل للشريط السفلي (العالمي) -->
             <div class="card" style="border: 2px solid #d4af37;">
-                <h2 style="color: #d4af37;">⚡ إدارة الشريط العالمي (السفلي)</h2>
+                <h2 style="color: #d4af37;">⚡ مراجعة أخبار RSS للشريط السفلي — لا تظهر قبل الاعتماد</h2>
                 <table>
                     <tr><th>الخبر</th><th>الحالة</th><th>الإجراءات</th></tr>
                     {% for item in world_news %}
@@ -507,9 +514,9 @@ EDIT_NEWS_HTML = """
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE category = 'السويداء' ORDER BY id DESC LIMIT 30")
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name = 'لوحة البث' ORDER BY id DESC LIMIT 50")
     sweida_news = cursor.fetchall()
-    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE category = 'عالمي' ORDER BY id DESC LIMIT 30")
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name IS NOT NULL AND source_name <> 'لوحة البث' ORDER BY id DESC LIMIT 100")
     world_news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
@@ -894,16 +901,16 @@ TICKER_HTML = """
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; user-select: none; }
         .corner-logo { position: absolute; top: 65px; right: 15px; z-index: 100; width: 130px; pointer-events: none; }
         .corner-logo img { width: 100%; height: auto; }
-        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
+        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; pointer-events: none; isolation: isolate; contain: layout paint; }
         .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
-        .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; padding: 15px; box-sizing: border-box; }
+        .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; padding: 15px; box-sizing: border-box; isolation: isolate; }
         .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; }
         
         /* إخفاء تام لأي تحكم أو شريط للمشاهدين ليبدو كبث مباشر حقيقي */
         video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); object-fit: contain; background-color: #000; pointer-events: none; }
         
         .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-color: #000; pointer-events: none; }
-        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
+        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; pointer-events: none; isolation: isolate; contain: layout paint; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
         .ticker-move { display: flex; flex-wrap: nowrap; width: max-content; max-width: none; flex-shrink: 0; white-space: nowrap; padding: 0; font-size: 17px; line-height: 1.2; color: #ffffff; will-change: transform; transform: translate3d(0,0,0); }
@@ -912,14 +919,9 @@ TICKER_HTML = """
         .ticker-item { display: inline-block; padding: 0 20px; }
         #touch-overlay { position: fixed; bottom: 62px; left: 12px; width: auto; height: auto; z-index: 9999; background: rgba(0,0,0,.72); color: #fff; border: 1px solid #d4af37; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-size: 14px; }
         .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
-@keyframes ticker-ltr {
-    0% {
-        transform: translate3d(-50%, 0, 0);
-    }
-    100% {
-        transform: translate3d(0, 0, 0);
-    }
-}    </style>
+        @keyframes top-ticker-motion { from { transform: translate3d(-50%, 0, 0); } to { transform: translate3d(0, 0, 0); } }
+        @keyframes bottom-ticker-motion { from { transform: translate3d(-50%, 0, 0); } to { transform: translate3d(0, 0, 0); } }
+    </style>
 </head>
 <body>
     <button id="touch-overlay" onclick="enableAudioAndPlay()">🔊 تفعيل الصوت إذا كان المتصفح يمنع التشغيل التلقائي</button>
@@ -987,7 +989,7 @@ TICKER_HTML = """
             if (!el || el.dataset.tickerSpeed === String(value)) return;
             // Do not restart the animation on every 10-second news refresh.
             el.dataset.tickerSpeed = String(value);
-            el.style.animation = `ticker-ltr ${value}s linear infinite`;
+            el.style.animation = `${which === 'top' ? 'top-ticker-motion' : 'bottom-ticker-motion'} ${value}s linear infinite`;
         }
 
         function syncAudio(serverTime, activeSongSetting) {
@@ -1228,26 +1230,21 @@ TICKER_HTML = """
             } catch(e){}
         }
 
-        function renderTickerContent(news) {
-            let localItems = [], worldItems = [];
-            (Array.isArray(news) ? news : []).forEach(i => {
-                const title = String(i.title || '').trim();
-                if (!title) return;
-                const category = String(i.category || '').trim();
-                const itemMarkup = `<span class="ticker-item">${escapeTickerText(title)}</span><span class="ticker-separator"> • </span>`;
-                if (category.includes('السويداء') || category.includes('محلي')) localItems.push(itemMarkup);
-                else worldItems.push(itemMarkup);
-            });
-            if (!localItems.length) localItems = ['<span class="ticker-item">شبكة باشان الإعلامية — أخبار السويداء</span><span class="ticker-separator"> • </span>'];
-            if (!worldItems.length) worldItems = ['<span class="ticker-item">تغطية مستمرة عبر باشان — أخبار عربية ودولية واقتصادية</span><span class="ticker-separator"> • </span>'];
+        function renderTickerContent(payload) {
+            // Strict separation: top = manually entered admin headlines;
+            // bottom = RSS headlines that have been approved in admin.
+            const topNews = Array.isArray(payload) ? payload.filter(i => i.source_name === 'لوحة البث') : (payload && Array.isArray(payload.top) ? payload.top : []);
+            const bottomNews = Array.isArray(payload) ? payload.filter(i => i.source_name && i.source_name !== 'لوحة البث') : (payload && Array.isArray(payload.bottom) ? payload.bottom : []);
+            const localItems = topNews.map(i => `<span class="ticker-item">${escapeTickerText(String(i.title || '').trim())}</span><span class="ticker-separator"> • </span>`).filter(Boolean);
+            const worldItems = bottomNews.map(i => `<span class="ticker-item">${escapeTickerText(String(i.title || '').trim())}</span><span class="ticker-separator"> • </span>`).filter(Boolean);
 
-            function buildSeamlessTrack(elementId, wrapSelector, items) {
+            function buildSeamlessTrack(elementId, items) {
                 const el = document.getElementById(elementId);
-                const wrap = el ? el.closest(wrapSelector) : null;
+                const wrap = el ? el.closest('.ticker-wrap') : null;
                 if (!el || !wrap) return;
-                const base = items.join('');
-                // Repeat the news within each half until it is wider than the viewport.
-                // This prevents an empty gap when there are only a few headlines.
+                const base = items.length ? items.join('') : (elementId === 'top-ticker-content'
+                    ? '<span class="ticker-item">أضف أخبار الشريط العلوي من لوحة الإدارة</span><span class="ticker-separator"> • </span>'
+                    : '<span class="ticker-item">بانتظار اعتماد الأخبار العالمية من لوحة الإدارة</span><span class="ticker-separator"> • </span>');
                 const probe = document.createElement('span');
                 probe.className = 'ticker-copy';
                 probe.style.position = 'absolute';
@@ -1263,18 +1260,15 @@ TICKER_HTML = """
                     probe.innerHTML = oneCopy;
                 }
                 probe.remove();
-                const markupKey = oneCopy;
-                // Do not touch the DOM or restart motion when headlines have not changed.
-                if (el.dataset.tickerMarkup === markupKey) return;
+                if (el.dataset.tickerMarkup === oneCopy) return;
                 el.innerHTML = `<span class="ticker-copy">${oneCopy}</span><span class="ticker-copy" aria-hidden="true">${oneCopy}</span>`;
-                el.dataset.tickerMarkup = markupKey;
-                // Force a clean animation only when the actual headline set changes.
+                el.dataset.tickerMarkup = oneCopy;
                 el.style.animation = 'none';
                 void el.offsetWidth;
-                el.style.animation = `ticker-ltr ${Math.max(30, Math.min(600, Number(el.dataset.tickerSpeed) || 90))}s linear infinite`;
+                el.style.animation = `${elementId === 'top-ticker-content' ? 'top-ticker-motion' : 'bottom-ticker-motion'} ${Math.max(30, Math.min(600, Number(el.dataset.tickerSpeed) || 90))}s linear infinite`;
             }
-            buildSeamlessTrack('top-ticker-content', '.ticker-wrap', localItems);
-            buildSeamlessTrack('ticker-content', '.ticker-wrap', worldItems);
+            buildSeamlessTrack('top-ticker-content', localItems);
+            buildSeamlessTrack('ticker-content', worldItems);
             applyTickerSpeed('top', lastTickerSpeeds.top || 90);
             applyTickerSpeed('bottom', lastTickerSpeeds.bottom || 90);
         }
@@ -1312,43 +1306,35 @@ def get_ticker():
 
 @app.get("/api/approved_news")
 def get_approved_news():
-    """Return approved ticker items from both the broadcast news DB and the portal DB."""
-    items = []
-
-    # Short ticker news entered/fetched through the broadcast admin panel.
+    """Return separate approved lists: manual top ticker and RSS-only bottom ticker."""
+    top_items = []
+    bottom_items = []
     conn = sqlite3.connect(DB_NAME)
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT title, category FROM news WHERE lower(trim(status)) = 'approved' ORDER BY id DESC LIMIT 50")
-        for title, category in cursor.fetchall():
+        # Only manually entered headlines can appear in the top ticker.
+        cursor.execute("SELECT title, category, source_name FROM news WHERE lower(trim(status)) = 'approved' AND source_name = 'لوحة البث' ORDER BY id DESC LIMIT 80")
+        for title, category, source_name in cursor.fetchall():
             if title and str(title).strip():
-                items.append({"title": str(title).strip(), "category": str(category or "عالمي").strip()})
+                top_items.append({"title": str(title).strip(), "category": str(category or "السويداء").strip(), "source_name": source_name})
+        # Only approved automatically fetched source items can appear in the bottom ticker.
+        cursor.execute("SELECT title, category, source_name FROM news WHERE lower(trim(status)) = 'approved' AND source_name IS NOT NULL AND source_name <> 'لوحة البث' ORDER BY id DESC LIMIT 150")
+        for title, category, source_name in cursor.fetchall():
+            if title and str(title).strip():
+                bottom_items.append({"title": str(title).strip(), "category": str(category or "عالمي").strip(), "source_name": source_name})
     finally:
         conn.close()
 
-    # Also include articles approved in the multilingual news portal, which uses a separate database.
-    conn = sqlite3.connect(DB_PORTAL)
-    try:
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SELECT title_ar, category FROM articles WHERE lower(trim(status)) = 'approved' ORDER BY id DESC LIMIT 50")
-            for title, category in cursor.fetchall():
-                if title and str(title).strip():
-                    items.append({"title": str(title).strip(), "category": str(category or "عالمي").strip()})
-        except sqlite3.Error as exc:
-            print(f"Ticker portal DB query failed: {exc}")
-    finally:
-        conn.close()
+    def dedupe(items):
+        result, seen = [], set()
+        for item in items:
+            key = item["title"].casefold()
+            if key not in seen:
+                seen.add(key)
+                result.append(item)
+        return result
 
-    # De-duplicate identical headlines across the two databases while preserving newest-first order.
-    unique_items = []
-    seen = set()
-    for item in items:
-        key = item["title"].casefold()
-        if key not in seen:
-            seen.add(key)
-            unique_items.append(item)
-    return unique_items[:80]
+    return {"top": dedupe(top_items), "bottom": dedupe(bottom_items)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
