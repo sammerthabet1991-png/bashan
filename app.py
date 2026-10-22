@@ -100,7 +100,7 @@ def init_dbs():
         ]
         cursor_p.executemany("INSERT OR IGNORE INTO portal_sources (name, url, category, language) VALUES (?, ?, ?, ?)", default_portal_sources)
         
-        # إضافة مقالات افتتاحية أولية لكل لغة لضمان عدم ظهور الشاشة فارغة
+        # مقالات افتتاحية لضمان عمل الواجهات بسلاسة
         cursor_p.execute("INSERT OR IGNORE INTO articles (id, title, content, category, language, source_name, author, published_at, status) VALUES (1, 'شبكة باشان تنطلق بحلة جديدة', 'تطلق شبكة باشان الإعلامية بوابتها الإخبارية المتكاملة تغطي كافة الأحداث المحلية والعالمية.', 'عاجل', 'ar', 'باشان للإعلام', 'فريق التحرير', 'اليوم', 'approved')")
         cursor_p.execute("INSERT OR IGNORE INTO articles (id, title, content, category, language, source_name, author, published_at, status) VALUES (2, 'Bashan News Portal Launched', 'Bashan media network launches its comprehensive news portal covering global and local updates.', 'عالمي', 'en', 'Bashan Media', 'Editorial Team', 'Today', 'approved')")
         cursor_p.execute("INSERT OR IGNORE INTO articles (id, title, content, category, language, source_name, author, published_at, status) VALUES (3, 'רשת החדשות בשאן השקה', 'רשת החדשות בשאן משיקה את פורטל החדשות החדש שלה.', 'עולם', 'he', 'בשאן חדשות', 'צוות מערכת', 'היום', 'approved')")
@@ -380,7 +380,162 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. لوحة تحكم الموقع الإخباري والمقالات (/news/admin) ---
+# --- 4. واجهة البث المباشر الأساسية والشغالة (/ticker) ---
+TICKER_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BASHAN LINE - البث المباشر</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; user-select: none; }
+        .corner-logo { position: absolute; top: 65px; right: 15px; z-index: 100; width: 130px; filter: drop-shadow(0px 4px 15px rgba(0,0,0,0.8)); }
+        .corner-logo img { width: 100%; height: auto; }
+        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
+        .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
+        .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; }
+        .image-card { width: 92%; height: 88%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-size: cover; background-position: center; transition: background-image 1.2s ease-in-out; position: relative; }
+        video.video-card { width: 92%; height: 88%; max-width: 1150px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); object-fit: cover; pointer-events: none; }
+        .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; }
+        .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; }
+        .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
+        .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
+        .ticker-move { display: inline-block; white-space: nowrap; padding-right: 100%; font-size: 17px; color: #ffffff; }
+        .ticker-item { display: inline-block; padding: 0 20px; }
+        #touch-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; background: transparent; cursor: pointer; }
+        @keyframes ticker { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(100%, 0, 0); } }
+    </style>
+</head>
+<body>
+    <div id="touch-overlay"></div>
+    <div class="corner-logo"><img src="/logo.png" alt="Logo"></div>
+    <div class="top-ticker-container">
+        <div class="top-ticker-title">أخبار السويداء</div>
+        <div class="ticker-wrap"><div class="ticker-move" id="top-ticker-content">جاري التحميل...</div></div>
+    </div>
+    <div class="center-stage" id="stage-container"><div class="image-card" id="main-image"></div></div>
+    <audio id="audio-player" preload="auto" style="display:none;"></audio>
+    <div class="breaking-banner" id="breaking-banner"><span>🔴 عاجل: </span><span id="breaking-text"></span></div>
+    <div class="ticker-container">
+        <div class="ticker-title">أخبار عالمية</div>
+        <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
+    </div>
+    <script>
+        let imageList = [], songList = [], currentSongPath = "", currentSongIndex = 0, isAudioUnlocked = false;
+        const audioPlayer = document.getElementById('audio-player');
+
+        function unlockAudio() {
+            if (isAudioUnlocked) return;
+            const vid = document.getElementById('live-video');
+            if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
+            if (audioPlayer && audioPlayer.src) { audioPlayer.muted = false; audioPlayer.play().catch(()=>{}); }
+            isAudioUnlocked = true;
+            document.getElementById('touch-overlay').style.display = 'none';
+        }
+        document.getElementById('touch-overlay').addEventListener('click', unlockAudio);
+
+        async function loadAssets() {
+            try {
+                imageList = await (await fetch('/api/get_images')).json();
+                songList = await (await fetch('/api/get_songs')).json();
+            } catch(e){}
+        }
+
+        function setSongSource(targetUrl) {
+            if (currentSongPath !== targetUrl) {
+                currentSongPath = targetUrl;
+                audioPlayer.src = targetUrl;
+                audioPlayer.currentTime = 0;
+                audioPlayer.play().then(() => { audioPlayer.muted = false; }).catch(() => {});
+            } else if (audioPlayer.paused && currentSongPath !== "") {
+                audioPlayer.play().catch(() => {});
+            }
+        }
+
+        audioPlayer.addEventListener('ended', () => {
+            if (songList.length > 0) {
+                currentSongIndex = (currentSongIndex + 1) % songList.length;
+                setSongSource(songList[currentSongIndex]);
+            }
+        });
+
+        async function checkLiveState() {
+            try {
+                const state = await (await fetch('/api/live_state')).json();
+                const serverTime = state.server_time || (Date.now() / 1000);
+                
+                document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
+                document.getElementById('top-ticker-content').style.animationDelay = `-${serverTime % state.sweida_speed}s`;
+                document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
+                document.getElementById('ticker-content').style.animationDelay = `-${serverTime % state.world_speed}s`;
+                
+                const banner = document.getElementById('breaking-banner');
+                if(state.breaking_banner) { document.getElementById('breaking-text').innerText = state.breaking_banner; banner.style.display = 'flex'; } else { banner.style.display = 'none'; }
+                
+                const stage = document.getElementById('stage-container');
+                if(state.media_type === 'video') {
+                    if(!document.getElementById('live-video')) {
+                        stage.innerHTML = `<video id="live-video" class="video-card" src="${state.active_video}" autoplay loop playsinline></video>`;
+                    }
+                    audioPlayer.pause();
+                    currentSongPath = "";
+                } else {
+                    if(!document.getElementById('main-image')) {
+                        stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
+                    }
+                    if(imageList.length > 0) {
+                        const idx = Math.floor(serverTime / 6) % imageList.length;
+                        document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
+                    }
+                    if(state.active_song === "AUTO_PLAYLIST" && songList.length > 0) {
+                        setSongSource(songList[currentSongIndex]);
+                    } else if(state.active_song) {
+                        setSongSource(state.active_song);
+                    } else {
+                        audioPlayer.pause();
+                        currentSongPath = "";
+                    }
+                }
+            } catch(e){}
+        }
+
+        async function updateTickers() {
+            try {
+                const news = await (await fetch('/api/approved_news')).json();
+                let s = '', w = '';
+                news.forEach(i => {
+                    if(i.category === 'السويداء') s += `<div class="ticker-item">${i.title}</div> • `;
+                    else w += `<div class="ticker-item">${i.title}</div> • `;
+                });
+                document.getElementById('top-ticker-content').innerHTML = s;
+                document.getElementById('ticker-content').innerHTML = w;
+            } catch(e){}
+        }
+
+        loadAssets(); checkLiveState(); updateTickers();
+        setInterval(checkLiveState, 1000);
+        setInterval(updateTickers, 20000);
+    </script>
+</body>
+</html>
+"""
+
+@app.get("/ticker", response_class=HTMLResponse)
+def get_ticker():
+    return TICKER_HTML
+
+@app.get("/api/approved_news")
+def get_approved_news():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 30")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"title": r[0], "category": r[1]} for r in rows]
+
+
+# --- 5. لوحة تحكم الموقع الإخباري والمقالات (/news/admin) ---
 ADMIN_PORTAL_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -411,7 +566,7 @@ ADMIN_PORTAL_HTML = """
     
     <div class="grid">
         <div class="card">
-            <h2 style="color: #d4af37;">✍️ كتابة مقال أو خبر محلي (أخبار السويداء / مقالات عامة)</h2>
+            <h2 style="color: #d4af37;">✍️ كتابة مقال أو خبر محلي</h2>
             <form action="/news/admin/add" method="post">
                 <label>العنوان:</label><input type="text" name="title" required>
                 <label>التصنيف:</label>
@@ -424,7 +579,7 @@ ADMIN_PORTAL_HTML = """
                     <option value="عالمي">عالمي</option>
                 </select>
                 <label>اللغة:</label>
-                <select name="language"><option value="ar">العربية (Arabic)</option><option value="en">English</option><option value="he">עברית (Hebrew)</option></select>
+                <select name="language"><option value="ar">العربية</option><option value="en">English</option><option value="he">עברית</option></select>
                 <label>اسم الكاتب:</label><input type="text" name="author" value="فريق تحرير باشان" required>
                 <label>اسم المصدر:</label><input type="text" name="source_name" value="خاص - باشان" required>
                 <label>محتوى المقال / الخبر:</label><textarea name="content" rows="4" required></textarea>
@@ -491,7 +646,7 @@ def portal_delete_article(article_id: int, username: str = Depends(verify_portal
     return HTMLResponse("<script>window.location.href='/news/admin';</script>")
 
 
-# --- 5. الموقع الإخباري للزوار (/news) بستايل الجزيرة / BBC الاحترافي ---
+# --- 6. الموقع الإخباري للزوار (/news) ---
 PORTAL_MAIN_HTML = """
 <!DOCTYPE html>
 <html dir="{{ 'rtl' if current_lang != 'en' else 'ltr' }}" lang="{{ current_lang }}">
@@ -512,8 +667,6 @@ PORTAL_MAIN_HTML = """
         .sub-header button:hover, .sub-header button.active { color: #d4af37; border-bottom: 2px solid #d4af37; }
 
         .container { max-width: 1280px; margin: 30px auto; padding: 0 20px; }
-        
-        /* ستايل الجزيرة / BBC للخبر الرئيسي البارز */
         .featured-hero { display: grid; grid-template-columns: 2fr 1fr; gap: 25px; margin-bottom: 40px; background: #121824; border: 1px solid #1e293b; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
         .hero-main { padding: 35px; display: flex; flex-direction: column; justify-content: space-between; }
         .hero-side { background: #1a2332; padding: 25px; border-left: 1px solid #2a364f; display: flex; flex-direction: column; gap: 15px; }
@@ -521,17 +674,13 @@ PORTAL_MAIN_HTML = """
         .hero-main h1 { color: #ffffff; font-size: 28px; margin: 15px 0; line-height: 1.4; }
         .hero-main p { color: #9ca3af; font-size: 16px; line-height: 1.6; }
 
-        /* شبكة الأخبار والمقالات */
         .grid-news { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 25px; }
         .article-card { background: #121824; border: 1px solid #1e293b; border-radius: 8px; padding: 22px; display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.2s, border-color 0.2s; }
         .article-card:hover { transform: translateY(-3px); border-color: #d4af37; }
         .article-card h3 { color: #f9fafb; margin: 12px 0; font-size: 19px; line-height: 1.4; }
         .article-card p { color: #9ca3af; font-size: 14px; line-height: 1.6; }
-        
         .meta { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; border-top: 1px solid #1f2937; padding-top: 12px; margin-top: 15px; }
-
         footer { text-align: center; padding: 30px; background: #111827; margin-top: 60px; border-top: 2px solid #d4af37; color: #9ca3af; font-size: 14px; }
-        
         @media(max-width: 900px) { .featured-hero { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -559,9 +708,7 @@ PORTAL_MAIN_HTML = """
     </div>
 
     <div class="container">
-        
         {% if articles %}
-        <!-- الخبر الرئيسي البارز (ستايل BBC / الجزيرة) -->
         <div class="featured-hero">
             <div class="hero-main">
                 <div>
@@ -584,7 +731,6 @@ PORTAL_MAIN_HTML = """
             </div>
         </div>
 
-        <!-- شبكة الأخبار والمقالات -->
         <div class="grid-news">
             {% for item in articles[1:] %}
             <div class="article-card" data-category="{{ item[3] }}">
@@ -602,10 +748,9 @@ PORTAL_MAIN_HTML = """
         </div>
         {% else %}
         <div style="text-align: center; padding: 80px; color: #9ca3af; font-size: 18px;">
-            لا توجد مقالات أو أخبار معتمدة بهذه اللغّة حالياً. يرجى الاعتماد من لوحة التحكم.
+            لا توجد مقالات معتمدة لهذه اللغّة حالياً. يرجى الاعتماد من لوحة التحكم.
         </div>
         {% endif %}
-
     </div>
 
     <footer>
@@ -616,7 +761,6 @@ PORTAL_MAIN_HTML = """
         function filterCat(cat) {
             document.querySelectorAll('.sub-header button').forEach(b => b.classList.remove('active'));
             event.target.classList.add('active');
-            
             const hero = document.querySelector('.featured-hero');
             document.querySelectorAll('.article-card').forEach(card => {
                 if(cat === 'all' || card.getAttribute('data-category') === cat) {
@@ -643,7 +787,7 @@ def portal_home(lang: str = "ar"):
     return Template(PORTAL_MAIN_HTML).render(articles=articles, current_lang=lang)
 
 
-# --- 6. صفحة اتصل بنا ---
+# --- 7. صفحة اتصل بنا ---
 CONTACT_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
