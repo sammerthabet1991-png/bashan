@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import secrets
+import time
 import feedparser
 from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, FileResponse
@@ -124,7 +125,9 @@ def get_images():
 
 @app.get("/api/live_state")
 def get_live_state():
-    return CURRENT_STATE
+    state = CURRENT_STATE.copy()
+    state["server_time"] = time.time()  # توقيت السيرفر بالثواني لتوحيد العرض عالمياً
+    return state
 
 # --- 3. لوحة التحكم الإدارية ---
 ADMIN_HTML = """
@@ -334,13 +337,13 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- 4. واجهة البث المباشر (تلقائية بالكامل وبدون أزرار) ---
+# --- 4. واجهة البث المباشر (تزامن عالمي موحد للجميع 100%) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
-    <title>BASHAN LINE - البث المباشر</title>
+    <title>BASHAN LINE - البث المباشر الموحد</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #02040a; color: #fff; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; cursor: default; }
         .corner-logo { position: absolute; top: 75px; right: 25px; z-index: 100; width: 170px; filter: drop-shadow(0px 4px 15px rgba(0,0,0,0.8)); }
@@ -392,12 +395,11 @@ TICKER_HTML = """
 
     <script>
         let imageList = [];
-        let currentImgIdx = 0;
         let lastPlayedSong = "";
         let currentVideoSrc = "";
         let currentMediaType = "";
 
-        // إلغاء كتم الصوت تلقائياً مع أي حركة غير مرئية للمستخدم
+        // تفعيل الصوت المباشر بدون أزرار مع أول تفاعل خفيف على الشاشة
         document.addEventListener('click', () => {
             const vid = document.getElementById('live-video');
             if(vid) vid.muted = false;
@@ -409,32 +411,29 @@ TICKER_HTML = """
             try {
                 const res = await fetch('/api/get_images');
                 imageList = await res.json();
-                if(imageList.length > 0) {
-                    changeImage();
-                    setInterval(changeImage, 6000);
-                }
             } catch (e) {}
-        }
-
-        function changeImage() {
-            if(imageList.length === 0 || currentMediaType !== 'image') return;
-            const imgCard = document.getElementById('main-image');
-            if(imgCard) {
-                imgCard.style.backgroundImage = `url('${imageList[currentImgIdx]}')`;
-                currentImgIdx = (currentImgIdx + 1) % imageList.length;
-            }
         }
 
         async function checkLiveState() {
             try {
                 const res = await fetch('/api/live_state');
                 const state = await res.json();
+                const serverTime = state.server_time || (Date.now() / 1000);
                 
+                // 1. تزامن حركة الأشرطة الأخبارية بحسب زمن السيرفر
                 const topMove = document.getElementById('top-ticker-content');
                 const bottomMove = document.getElementById('ticker-content');
-                if(state.sweida_speed) topMove.style.animation = `ticker ${state.sweida_speed}s linear infinite`;
-                if(state.world_speed) bottomMove.style.animation = `ticker ${state.world_speed}s linear infinite`;
+                
+                if(state.sweida_speed) {
+                    topMove.style.animation = `ticker ${state.sweida_speed}s linear infinite`;
+                    topMove.style.animationDelay = `-${serverTime % state.sweida_speed}s`;
+                }
+                if(state.world_speed) {
+                    bottomMove.style.animation = `ticker ${state.world_speed}s linear infinite`;
+                    bottomMove.style.animationDelay = `-${serverTime % state.world_speed}s`;
+                }
 
+                // 2. شريط العاجل
                 const banner = document.getElementById('breaking-banner');
                 if(state.breaking_banner && state.breaking_banner.trim() !== "") {
                     document.getElementById('breaking-text').innerText = state.breaking_banner;
@@ -446,6 +445,7 @@ TICKER_HTML = """
                 const stage = document.getElementById('stage-container');
                 const audioPlayer = document.getElementById('audio-player');
 
+                // 3. تزامن الفيديو الموحد عالمياً
                 if (state.media_type === 'video') {
                     if (currentMediaType !== 'video' || currentVideoSrc !== state.active_video) {
                         currentMediaType = 'video';
@@ -453,23 +453,30 @@ TICKER_HTML = """
                         audioPlayer.pause();
                         
                         stage.innerHTML = `<video id="live-video" class="video-card" src="${currentVideoSrc}" autoplay loop playsinline></video>`;
-                        
-                        setTimeout(() => {
-                            const vid = document.getElementById('live-video');
-                            if(vid) {
-                                vid.play().then(() => { vid.muted = false; }).catch(() => {
-                                    vid.muted = true;
-                                    vid.play();
-                                });
-                            }
-                        }, 200);
+                    }
+                    
+                    const vid = document.getElementById('live-video');
+                    if(vid && vid.duration) {
+                        const targetTime = serverTime % vid.duration;
+                        // إعادة ضبط زمن الفيديو إذا زاد الفارق عن ثانية واحدة فقط بين المشاهد والسيرفر
+                        if(Math.abs(vid.currentTime - targetTime) > 1.5) {
+                            vid.currentTime = targetTime;
+                        }
                     }
                 } 
+                // 4. تزامن معرض الصور الموحد عالمياً (تتغير كل 6 ثوانٍ بدقة متطابقة للجميع)
                 else if (state.media_type === 'image') {
                     if (currentMediaType !== 'image') {
                         currentMediaType = 'image';
                         stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
-                        changeImage();
+                    }
+
+                    if(imageList.length > 0) {
+                        const imgIndex = Math.floor(serverTime / 6) % imageList.length;
+                        const imgCard = document.getElementById('main-image');
+                        if(imgCard) {
+                            imgCard.style.backgroundImage = `url('${imageList[imgIndex]}')`;
+                        }
                     }
 
                     if (state.active_song !== lastPlayedSong) {
@@ -482,8 +489,11 @@ TICKER_HTML = """
                         }
                     }
 
-                    if (state.active_song && audioPlayer.paused) {
-                        audioPlayer.play().catch(e=>{});
+                    if (state.active_song && audioPlayer.audioTracks) {
+                        const targetAudioTime = serverTime % (audioPlayer.duration || 1);
+                        if(Math.abs(audioPlayer.currentTime - targetAudioTime) > 2) {
+                            audioPlayer.currentTime = targetAudioTime;
+                        }
                     }
                 }
 
@@ -507,7 +517,7 @@ TICKER_HTML = """
         loadImages();
         checkLiveState();
         updateTickers();
-        setInterval(checkLiveState, 2000);
+        setInterval(checkLiveState, 1000);
         setInterval(updateTickers, 20000);
     </script>
 </body>
