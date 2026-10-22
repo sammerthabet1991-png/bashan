@@ -386,7 +386,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. واجهة البث المباشر المحدثة (مع ضبط القياسات ومنع التفاعل بالضغط) (/ticker) ---
+# --- 4. واجهة البث المباشر (مع ربط شريط السويداء وأخبار الوكالات والموقع) (/ticker) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -511,9 +511,15 @@ TICKER_HTML = """
                 const news = await (await fetch('/api/approved_news')).json();
                 let s = '', w = '';
                 news.forEach(i => {
-                    if(i.category === 'السويداء') s += `<div class="ticker-item">${i.title}</div> • `;
-                    else w += `<div class="ticker-item">${i.title}</div> • `;
+                    // إذا كان الخبر يخص السويداء أو محلي يظهر بالشريط العلوي، والباقي بالشريط العالمي
+                    if(i.category === 'السويداء' || i.category === 'أخبار السويداء المحلية') {
+                        s += `<div class="ticker-item">${i.title}</div> • `;
+                    } else {
+                        w += `<div class="ticker-item">${i.title}</div> • `;
+                    }
                 });
+                if(!s) s = `<div class="ticker-item">شبكة باشان الإعلامية - تغطية مستمرة</div> • `;
+                if(!w) w = `<div class="ticker-item">تابعوا أحدث المستجدات الإقليمية والعالمية عبر باشان</div> • `;
                 document.getElementById('top-ticker-content').innerHTML = s;
                 document.getElementById('ticker-content').innerHTML = w;
             } catch(e){}
@@ -538,7 +544,16 @@ def get_approved_news():
     cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 30")
     rows = cursor.fetchall()
     conn.close()
-    return [{"title": r[0], "category": r[1]} for r in rows]
+    
+    # جلب أيضاً المقالات المعتمدة من بوابـة الأخبار لتظهر في الشريط أيضاً
+    conn_p = sqlite3.connect(DB_PORTAL)
+    cursor_p = conn_p.cursor()
+    cursor_p.execute("SELECT title_ar, category FROM articles WHERE status = 'approved' ORDER BY id DESC LIMIT 20")
+    rows_p = cursor_p.fetchall()
+    conn_p.close()
+
+    all_news = [{"title": r[0], "category": r[1]} for r in rows] + [{"title": r[0], "category": r[1]} for r in rows_p]
+    return all_news
 
 
 # --- 5. لوحة تحكم الموقع الإخباري والمقالات (/news/admin) ---
@@ -600,7 +615,7 @@ ADMIN_PORTAL_HTML = """
                 <label>اسم الكاتب:</label><input type="text" name="author" value="فريق تحرير باشان" required>
                 <label>اسم المصدر:</label><input type="text" name="source_name" value="خاص - باشان" required>
                 
-                <button type="submit" class="btn btn-approve" style="width:100%; padding:12px; font-size:15px; margin-top:10px;">نشر فوري في الموقع 🚀</button>
+                <button type="submit" class="btn btn-approve" style="width:100%; padding:12px; font-size:15px; margin-top:10px;">نشر فوري في الموقع والشريط 🚀</button>
             </form>
         </div>
 
@@ -715,7 +730,7 @@ def read_article(article_id: int, lang: str = "ar"):
     return Template(PORTAL_READ_HTML).render(title=title, content=content, category=row[6], source=row[7], author=row[8], date=row[9], lang=lang)
 
 
-# --- 7. الموقع الإخباري للزوار (/news) بستايل الجزيرة / BBC ---
+# --- 7. الموقع الإخباري للزوار (/news) ---
 PORTAL_MAIN_HTML = """
 <!DOCTYPE html>
 <html dir="{{ 'ltr' if current_lang == 'en' else 'rtl' }}" lang="{{ current_lang }}">
