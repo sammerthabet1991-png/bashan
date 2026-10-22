@@ -531,7 +531,10 @@ def set_active_video_direct(v: str, username: str = Depends(verify_admin)):
 
 @app.post("/set_active_song")
 def set_active_song(song_name: str = Form(None), username: str = Depends(verify_admin)):
-    CURRENT_STATE["media_type"] = "image"
+    # لا تغيّر نوع العرض عند اختيار الموسيقى: إذا كان الفيديو يعمل، أبقه يعمل
+    # مع استمرار مزامنة الصوت؛ وفي غير ذلك اعرض شرائح الصور مع الموسيقى.
+    if CURRENT_STATE.get("media_type") != "video":
+        CURRENT_STATE["media_type"] = "image"
     CURRENT_STATE["active_song"] = "AUTO_PLAYLIST" if song_name == "AUTO_PLAYLIST" else (f"/music/{song_name}" if song_name else "")
     CURRENT_STATE["playlist_started_at"] = time.time()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
