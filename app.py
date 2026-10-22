@@ -222,11 +222,11 @@ ADMIN_HTML = """
             </div>
 
             <div class="card" style="border: 2px solid #ff0000;">
-                <h2 style="color: #ff4444;">▶️ عرض فيديو يوتيوب (بدون أزرار وسطى)</h2>
+                <h2 style="color: #ff4444;">▶️ عرض فيديو أو بث يوتيوب مباشر</h2>
                 <form action="/set_youtube_video" method="post">
-                    <label>ضع رابط يوتيوب هنا:</label>
+                    <label>ضع رابط يوتيوب أو البث هنا:</label>
                     <input type="text" name="youtube_url" placeholder="https://www.youtube.com/watch?v=XXXXX" required>
-                    <button type="submit" class="btn" style="background:#ff0000; color:#fff; width:100%;">عرض يوتيوب مباشر 🚀</button>
+                    <button type="submit" class="btn" style="background:#ff0000; color:#fff; width:100%;">عرض المباشر فوراً 🚀</button>
                 </form>
             </div>
 
@@ -508,12 +508,21 @@ TICKER_HTML = """
         }
 
         function getYoutubeEmbedUrl(url) {
-            let regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-            let match = url.match(regExp);
-            let videoId = (match && match[2].length === 11) ? match[2] : null;
+            let videoId = "";
+            if (url.includes('youtu.be/')) {
+                videoId = url.split('youtu.be/')[1]?.split('?')[0];
+            } else if (url.includes('youtube.com/embed/')) {
+                videoId = url.split('embed/')[1]?.split('?')[0];
+            } else if (url.includes('youtube.com/watch')) {
+                let urlParams = new URLSearchParams(url.split('?')[1]);
+                videoId = urlParams.get('v');
+            } else if (url.includes('youtube.com/live/')) {
+                videoId = url.split('live/')[1]?.split('?')[0];
+            } else {
+                videoId = url.trim(); // إذا كان المعرف وحده مباشرة
+            }
             if (!videoId) return "";
-            // إخفاء زر التشغيل الأوسط والشعارات نهائياً عبر بارامترات يوتيوب
-            return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0&iv_load_policy=3`;
+            return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`;
         }
 
         function syncAudioSync(serverTime, activeSongSetting) {
@@ -565,8 +574,8 @@ TICKER_HTML = """
                 if(state.media_type === 'youtube' && state.youtube_url) {
                     let embedUrl = getYoutubeEmbedUrl(state.youtube_url);
                     if(embedUrl) {
-                        if(lastMediaType !== 'youtube' || !document.getElementById('youtube-frame')) {
-                            stage.innerHTML = `<iframe id="youtube-frame" class="youtube-card" src="${embedUrl}" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
+                        if(lastMediaType !== 'youtube' || !document.getElementById('youtube-frame') || document.getElementById('youtube-frame').src !== embedUrl) {
+                            stage.innerHTML = `<iframe id="youtube-frame" class="youtube-card" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
                             lastMediaType = 'youtube';
                         }
                     }
@@ -827,10 +836,10 @@ PORTAL_MAIN_HTML = """
     <div class="container">
         <div class="grid-news">
             {% for item in articles %}
-            <div class="article-card">
+            <article-card>
                 <h3><a href="/news/read/{{ item.id }}?lang={{ current_lang }}">{{ item.title }}</a></h3>
                 <p style="color:#9ca3af; font-size:14px;">{{ item.content[:160] }}...</p>
-            </div>
+            </article-card>
             {% endfor %}
         </div>
     </div>
