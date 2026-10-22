@@ -11,7 +11,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from jinja2 import Template
 import uvicorn
 
-# --- 1. إعداد قواعد البيانات والمجلدات ---
 DB_NAME = "bashan_radio.db"
 DB_PORTAL = "bashan_portal.db"
 UPLOAD_DIR = "music_library"
@@ -38,11 +37,9 @@ CURRENT_STATE = {
     "world_speed": 90
 }
 
-# --- 2. إعدادات الحماية ---
 security = HTTPBasic()
 ADMIN_USER = "admin"
 ADMIN_PASS = "Bashan2026!"
-
 PORTAL_ADMIN_USER = "portal_admin"
 PORTAL_ADMIN_PASS = "BashanNews2026!"
 
@@ -112,11 +109,28 @@ def fetch_portal_news():
             try:
                 feed = feedparser.parse(url)
                 for entry in feed.entries[:2]:
-                    cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name, status) VALUES (?, ?, ?, 'approved')", (entry.title.strip(), category, name))
+                    cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name, status) VALUES (?, ?, ?, 'pending')", (entry.title.strip(), category, name))
             except Exception:
                 pass
         conn.commit()
         conn.close()
+
+        conn_p = sqlite3.connect(DB_PORTAL)
+        cursor_p = conn_p.cursor()
+        cursor_p.execute("SELECT name, url, category FROM portal_sources")
+        for name, url, category in cursor_p.fetchall():
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:3]:
+                title = entry.title.strip()
+                summary = getattr(entry, 'summary', title)
+                pub_date = getattr(entry, 'published', 'حديثاً')
+                cursor_p.execute("""
+                    INSERT OR IGNORE INTO articles 
+                    (title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
+                """, (title, summary, title, summary, title, summary, category, name, "مراسلو الوكالات", pub_date))
+        conn_p.commit()
+        conn_p.close()
     except Exception:
         pass
 
@@ -167,7 +181,7 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث المباشر والأخبار ---
+# --- 3. لوحة تحكم البث والأخبار المباشرة (/admin) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -190,13 +204,18 @@ ADMIN_HTML = """
     </style>
 </head>
 <body>
-    <h1>BASHAN LINE — لوحة تحكم البث المباشر 🔒</h1>
+    <h1>BASHAN LINE — لوحة تحكم البث المباشر والأخبار 🔒</h1>
+    <div style="margin-bottom: 15px;">
+        <a href="/news/admin" style="background: #7b1fa2; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block;">📰 الانتقال إلى لوحة تحكم الموقع الإخباري</a>
+        <a href="/admin/approve_all" style="background: #2e7d32; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; display: inline-block; margin-right: 10px;">اعتماد كافة الأخبار المعلقة ✓✓</a>
+    </div>
     <div class="grid">
         <div>
             <div class="card" style="border: 2px solid #3b82f6;">
                 <h2 style="color: #60a5fa;">📺 وضع العرض على الشاشة</h2>
-                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:48%; padding:10px;">عرض الصور والموسيقى 🖼️</button></a>
-                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:48%; padding:10px;">الفيديوهات المحلية 🎬</button></a>
+                <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:32%; padding:10px;">عرض الصور 🖼️</button></a>
+                <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:32%; padding:10px;">الفيديوهات 🎬</button></a>
+                <a href="/admin/clear_stage"><button class="btn" style="background:#c62828; color:#fff; width:30%; padding:10px;">إيقاف ❌</button></a>
             </div>
 
             <div class="card" style="border: 2px solid #ff0000;">
@@ -218,30 +237,6 @@ ADMIN_HTML = """
                     <button type="submit" class="btn btn-approve" style="width:100%;">تفعيل الموسيقى</button>
                 </form>
             </div>
-
-            <div class="card" style="border: 2px solid #7b1fa2;">
-                <h2 style="color: #ab47bc;">🟣 سرعة شريط السويداء (العلوي)</h2>
-                <form action="/set_sweida_speed" method="post">
-                    <select name="sweida_speed">
-                        <option value="120" {% if sweida_speed == 120 %}selected{% endif %}>بطيء (120 ثانية)</option>
-                        <option value="90" {% if sweida_speed == 90 %}selected{% endif %}>عادي (90 ثانية)</option>
-                        <option value="60" {% if sweida_speed == 60 %}selected{% endif %}>سريع (60 ثانية)</option>
-                    </select><br>
-                    <button type="submit" class="btn" style="background:#7b1fa2; color:#fff; width:100%;">تعديل سرعة الشريط العلوي</button>
-                </form>
-            </div>
-
-            <div class="card" style="border: 2px solid #d4af37;">
-                <h2 style="color: #d4af37;">⚡ سرعة الشريط العالمي (السفلي)</h2>
-                <form action="/set_world_speed" method="post">
-                    <select name="world_speed">
-                        <option value="120" {% if world_speed == 120 %}selected{% endif %}>بطيء (120 ثانية)</option>
-                        <option value="90" {% if world_speed == 90 %}selected{% endif %}>عادي (90 ثانية)</option>
-                        <option value="60" {% if world_speed == 60 %}selected{% endif %}>سريع (60 ثانية)</option>
-                    </select><br>
-                    <button type="submit" class="btn btn-approve" style="width:100%;">تعديل سرعة الشريط السفلي</button>
-                </form>
-            </div>
         </div>
 
         <div>
@@ -257,34 +252,21 @@ ADMIN_HTML = """
                 </form>
             </div>
 
-            <!-- إدارة شريط السويداء العلوي -->
-            <div class="card" style="border: 2px solid #7b1fa2;">
-                <h2 style="color: #ab47bc;">🟣 إدارة شريط السويداء (العلوي)</h2>
+            <div class="card">
+                <h2>إدارة أخبار الشريطين (مع الاعتماد والتعديل)</h2>
                 <table>
-                    <tr><th>الخبر</th><th>الإجراءات</th></tr>
-                    {% for item in sweida_news %}
+                    <tr><th>التصنيف</th><th>الخبر</th><th>الحالة</th><th>الإجراءات</th></tr>
+                    {% for item in news %}
                     <tr>
+                        <td><span style="color:{% if item[2] == 'السويداء' %}#ab47bc{% else %}#d4af37{% endif %}; font-weight:bold;">{{ item[2] }}</span></td>
                         <td>{{ item[1] }}</td>
+                        <td>{% if item[4] == 'approved' %}<span style="color:#4ade80;">معتمد</span>{% else %}<span style="color:#f59e0b;">معلق</span>{% endif %}</td>
                         <td style="white-space:nowrap;">
-                            <a href="/admin/edit_news/{{ item[0] }}"><button class="btn btn-edit" style="padding:3px 8px;">تعديل</button></a>
-                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:3px 8px;">حذف</button></a>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </table>
-            </div>
-
-            <!-- إدارة الشريط العالمي السفلي -->
-            <div class="card" style="border: 2px solid #d4af37;">
-                <h2 style="color: #d4af37;">⚡ إدارة الشريط العالمي (السفلي)</h2>
-                <table>
-                    <tr><th>الخبر</th><th>الإجراءات</th></tr>
-                    {% for item in world_news %}
-                    <tr>
-                        <td>{{ item[1] }}</td>
-                        <td style="white-space:nowrap;">
-                            <a href="/admin/edit_news/{{ item[0] }}"><button class="btn btn-edit" style="padding:3px 8px;">تعديل</button></a>
-                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:3px 8px;">حذف</button></a>
+                            {% if item[4] == 'pending' %}
+                            <a href="/approve/{{ item[0] }}"><button class="btn btn-approve" style="padding:3px 6px;">اعتماد</button></a>
+                            {% endif %}
+                            <a href="/admin/edit_news/{{ item[0] }}"><button class="btn btn-edit" style="padding:3px 6px;">تعديل</button></a>
+                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:3px 6px;">حذف</button></a>
                         </td>
                     </tr>
                     {% endfor %}
@@ -330,14 +312,12 @@ EDIT_NEWS_HTML = """
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category FROM news WHERE category = 'السويداء' ORDER BY id DESC LIMIT 25")
-    sweida_news = cursor.fetchall()
-    cursor.execute("SELECT id, title, category FROM news WHERE category = 'عالمي' ORDER BY id DESC LIMIT 25")
-    world_news = cursor.fetchall()
+    cursor.execute("SELECT id, title, category, source_name, status FROM news ORDER BY id DESC LIMIT 50")
+    news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
     return Template(ADMIN_HTML).render(
-        sweida_news=sweida_news, world_news=world_news, music_files=music_files,
+        news=news, music_files=music_files,
         sweida_speed=CURRENT_STATE["sweida_speed"], world_speed=CURRENT_STATE["world_speed"],
         current_youtube=CURRENT_STATE["youtube_url"]
     )
@@ -369,6 +349,33 @@ def add_ticker_news(title: str = Form(...), category: str = Form(...), username:
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
+@app.get("/approve/{news_id}")
+def approve_news(news_id: int, username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE news SET status = 'approved' WHERE id = ?", (news_id,))
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.get("/admin/approve_all")
+def approve_all_news(username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE news SET status = 'approved' WHERE status = 'pending'")
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.get("/reject/{news_id}")
+def reject_news(news_id: int, username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM news WHERE id = ?", (news_id,))
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
 @app.get("/switch_to_images")
 def switch_to_images(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "image"
@@ -391,27 +398,105 @@ def set_active_song(song_name: str = Form(None), username: str = Depends(verify_
     CURRENT_STATE["active_song"] = "AUTO_PLAYLIST" if song_name == "AUTO_PLAYLIST" else (f"/music/{song_name}" if song_name else "")
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-@app.post("/set_sweida_speed")
-def set_sweida_speed(sweida_speed: int = Form(...), username: str = Depends(verify_admin)):
-    CURRENT_STATE["sweida_speed"] = sweida_speed
-    return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-@app.post("/set_world_speed")
-def set_world_speed(world_speed: int = Form(...), username: str = Depends(verify_admin)):
-    CURRENT_STATE["world_speed"] = world_speed
-    return HTMLResponse("<script>window.location.href='/admin';</script>")
+# --- 4. لوحة تحكم الموقع الإخباري والمقالات (/news/admin) ---
+ADMIN_PORTAL_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>BASHAN - لوحة تحكم الموقع الإخباري</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #080b14; color: #eaeaea; margin: 0; padding: 20px; }
+        h1 { color: #d4af37; border-bottom: 2px solid #d4af37; padding-bottom: 10px; }
+        .grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; }
+        .card { background: #121824; padding: 20px; border-radius: 8px; border: 1px solid #1e293b; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 10px; text-align: right; border-bottom: 1px solid #1e293b; font-size: 13px; }
+        th { background: #1a2332; color: #d4af37; }
+        .btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-approve { background: #2e7d32; color: white; }
+        .btn-reject { background: #c62828; color: white; }
+        .btn-back { background: #7b1fa2; color: white; text-decoration: none; padding: 8px 16px; border-radius: 6px; font-weight: bold; display: inline-block; margin-bottom: 15px; }
+        input, textarea, select { width: 100%; padding: 8px; background: #1a2332; color: #fff; border: 1px solid #2a364f; border-radius: 4px; box-sizing: border-box; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <h1>📰 BASHAN — لوحة تحكم الموقع الإخباري 🔒</h1>
+    <div style="margin-top: 15px;">
+        <a href="/admin" class="btn-back">⬅ العودة إلى لوحة تحكم البث المباشر</a>
+        <a href="/news" target="_blank" style="color: #60a5fa; font-weight: bold; margin-right: 15px;">معاينة الموقع الإخباري ↗</a>
+    </div>
+    <div class="grid">
+        <div class="card">
+            <h2>✍️ إضافة مقال للموقع</h2>
+            <form action="/news/admin/add" method="post">
+                <label>التصنيف:</label>
+                <select name="category">
+                    <option value="عاجل">عاجل</option>
+                    <option value="حدث اليوم">حدث اليوم</option>
+                    <option value="عالمي">عالمي</option>
+                </select>
+                <label>العنوان:</label><input type="text" name="title_ar" required>
+                <label>المحتوى:</label><textarea name="content_ar" rows="3" required></textarea>
+                <label>الكاتب:</label><input type="text" name="author" value="فريق تحرير باشان" required>
+                <button type="submit" class="btn btn-approve" style="width:100%; padding:10px; margin-top:10px;">نشر للموقع 🚀</button>
+            </form>
+        </div>
+        <div class="card">
+            <h2>المقالات المنشورة</h2>
+            <table>
+                <tr><th>التصنيف</th><th>العنوان</th><th>إجراء</th></tr>
+                {% for item in articles %}
+                <tr><td>{{ item[7] }}</td><td>{{ item[1] }}</td><td><a href="/news/admin/delete/{{ item[0] }}"><button class="btn btn-reject">حذف</button></a></td></tr>
+                {% endfor %}
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+"""
 
-@app.get("/reject/{news_id}")
-def reject_news(news_id: int, username: str = Depends(verify_admin)):
-    conn = sqlite3.connect(DB_NAME)
+@app.get("/news/admin", response_class=HTMLResponse)
+def portal_admin(username: str = Depends(verify_portal_admin)):
+    conn = sqlite3.connect(DB_PORTAL)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM news WHERE id = ?", (news_id,))
+    cursor.execute("SELECT id, title_ar, category, source_name FROM articles WHERE status = 'approved' ORDER BY id DESC LIMIT 50")
+    articles = cursor.fetchall()
+    conn.close()
+    return Template(ADMIN_PORTAL_HTML).render(articles=articles)
+
+@app.post("/news/admin/add")
+def portal_add_article(title_ar: str = Form(...), content_ar: str = Form(...), category: str = Form(...), author: str = Form(...), username: str = Depends(verify_portal_admin)):
+    conn = sqlite3.connect(DB_PORTAL)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO articles (title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'خاص', ?, ?, 'approved')",
+                   (title_ar, content_ar, title_ar, content_ar, title_ar, content_ar, category, author, time.strftime('%Y-%m-%d %H:%M')))
     conn.commit()
     conn.close()
-    return HTMLResponse("<script>window.location.href='/admin';</script>")
+    return HTMLResponse("<script>window.location.href='/news/admin';</script>")
+
+@app.get("/news/admin/delete/{article_id}")
+def portal_delete_article(article_id: int, username: str = Depends(verify_portal_admin)):
+    conn = sqlite3.connect(DB_PORTAL)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM articles WHERE id = ?", (article_id,))
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/news/admin';</script>")
+
+@app.get("/news", response_class=HTMLResponse)
+def portal_home(lang: str = "ar"):
+    conn = sqlite3.connect(DB_PORTAL)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title_ar, content_ar, category, source_name, author, published_at FROM articles WHERE status = 'approved' ORDER BY id DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    articles = [{"id": r[0], "title": r[1], "content": r[2]} for r in rows]
+    return HTMLResponse(f"<h1>موقع باشان الإخباري</h1><ul>" + "".join([f"<li>{a['title']}</li>" for a in articles]) + "</ul>")
 
 
-# --- 4. واجهة البث المباشر (الشاشة الرئيسية للزوار) ---
+# --- 5. واجهة البث المباشر (الشاشة الرئيسية للزوار) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -488,31 +573,6 @@ TICKER_HTML = """
             return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`;
         }
 
-        function syncAudio(serverTime, activeSongSetting) {
-            if (songList.length === 0) return;
-            let targetSongUrl = "";
-            let songOffset = 0;
-            if (activeSongSetting === "AUTO_PLAYLIST") {
-                const songDuration = 200;
-                let totalDuration = songList.length * songDuration;
-                let pTime = serverTime % totalDuration;
-                let sIdx = Math.floor(pTime / songDuration);
-                songOffset = pTime % songDuration;
-                targetSongUrl = songList[sIdx];
-            } else {
-                targetSongUrl = activeSongSetting;
-                songOffset = serverTime % (audioPlayer.duration || 200);
-            }
-            if (currentSongPath !== targetSongUrl) {
-                currentSongPath = targetSongUrl;
-                audioPlayer.src = targetSongUrl;
-                audioPlayer.currentTime = songOffset;
-                audioPlayer.play().catch(() => {});
-            } else if (Math.abs(audioPlayer.currentTime - songOffset) > 1.5) {
-                audioPlayer.currentTime = songOffset;
-            }
-        }
-
         async function checkLiveState() {
             try {
                 const response = await fetch('/api/live_state');
@@ -533,8 +593,6 @@ TICKER_HTML = """
                         lastMediaType = 'youtube';
                         lastYoutubeUrl = state.youtube_url;
                     }
-                    audioPlayer.pause();
-                    currentSongPath = "";
                 } 
                 else if(state.media_type === 'video') {
                     if(videoList.length > 0) {
@@ -548,8 +606,6 @@ TICKER_HTML = """
                             lastMediaType = 'video';
                         }
                     }
-                    audioPlayer.pause();
-                    currentSongPath = "";
                 } 
                 else {
                     if(lastMediaType !== 'image') {
@@ -559,12 +615,6 @@ TICKER_HTML = """
                     if(imageList.length > 0) {
                         const idx = Math.floor(serverTime / 6) % imageList.length;
                         document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
-                    }
-                    if(state.active_song) {
-                        syncAudio(serverTime, state.active_song);
-                    } else {
-                        audioPlayer.pause();
-                        currentSongPath = "";
                     }
                 }
             } catch(e){}
@@ -604,7 +654,7 @@ def get_ticker():
 def get_approved_news():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT title, category FROM news ORDER BY id DESC LIMIT 50")
+    cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 50")
     rows = cursor.fetchall()
     conn.close()
     return [{"title": r[0], "category": r[1]} for r in rows]
