@@ -345,7 +345,7 @@ ADMIN_HTML = """
             <div class="card" style="border: 2px solid #7b1fa2;">
                 <h2 style="color: #ab47bc;">🟣 سرعة شريط السويداء (العلوي)</h2>
                 <form action="/set_sweida_speed" method="post">
-                    <select name="sweida_speed">
+                    <select name="sweida_speed" onchange="this.form.requestSubmit()">
                         <option value="300" {% if sweida_speed == 300 %}selected{% endif %}>بطيء جداً (300 ثانية)</option>
                         <option value="240" {% if sweida_speed == 240 %}selected{% endif %}>بطيء جداً (240 ثانية)</option>
                         <option value="180" {% if sweida_speed == 180 %}selected{% endif %}>بطيء (180 ثانية)</option>
@@ -362,7 +362,7 @@ ADMIN_HTML = """
             <div class="card" style="border: 2px solid #d4af37;">
                 <h2 style="color: #d4af37;">⚡ سرعة شريط الأحداث العالمية (السفلي)</h2>
                 <form action="/set_world_speed" method="post">
-                    <select name="world_speed">
+                    <select name="world_speed" onchange="this.form.requestSubmit()">
                         <option value="300" {% if world_speed == 300 %}selected{% endif %}>بطيء جداً (300 ثانية)</option>
                         <option value="240" {% if world_speed == 240 %}selected{% endif %}>بطيء جداً (240 ثانية)</option>
                         <option value="180" {% if world_speed == 180 %}selected{% endif %}>بطيء (180 ثانية)</option>
@@ -902,11 +902,13 @@ TICKER_HTML = """
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .ticker-wrap { width: 100%; overflow: hidden; white-space: nowrap; position: relative; }
-        .ticker-move { display: inline-block; white-space: nowrap; padding-left: 0; padding-right: 100%; font-size: 17px; color: #ffffff; will-change: transform; }
+        .ticker-move { display: flex; flex-wrap: nowrap; width: max-content; max-width: none; flex-shrink: 0; white-space: nowrap; padding: 0; font-size: 17px; line-height: 1.2; color: #ffffff; will-change: transform; transform: translate3d(0,0,0); }
+        .ticker-move .ticker-copy { display: inline-block; flex: 0 0 auto; white-space: nowrap; padding-right: 32px; }
+        @media (max-width: 600px) { .top-ticker-container, .ticker-container { height: 44px; } .top-ticker-title, .ticker-title { padding: 0 8px; font-size: 12px; flex-shrink: 0; } .ticker-move { font-size: 14px; } .ticker-item { padding: 0 10px; } .center-stage { top: 44px; height: calc(100% - 88px); padding: 6px; } .corner-logo { width: 82px; top: 52px; right: 8px; } }
         .ticker-item { display: inline-block; padding: 0 20px; }
         #touch-overlay { position: fixed; bottom: 62px; left: 12px; width: auto; height: auto; z-index: 9999; background: rgba(0,0,0,.72); color: #fff; border: 1px solid #d4af37; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-size: 14px; }
         .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
-        @keyframes ticker-ltr { 0% { transform: translate3d(-100%, 0, 0); } 100% { transform: translate3d(100vw, 0, 0); } }
+        @keyframes ticker-ltr { 0% { transform: translate3d(-50%, 0, 0); } 100% { transform: translate3d(0, 0, 0); } }
     </style>
 </head>
 <body>
@@ -972,8 +974,9 @@ TICKER_HTML = """
         function applyTickerSpeed(which, seconds) {
             const el = document.getElementById(which === 'top' ? 'top-ticker-content' : 'ticker-content');
             const value = Math.max(30, Math.min(600, Number(seconds) || 90));
-            if (!el) return;
-            // Restart only when the admin changes the speed, not during every poll.
+            if (!el || el.dataset.tickerSpeed === String(value)) return;
+            // Do not restart the animation on every 10-second news refresh.
+            el.dataset.tickerSpeed = String(value);
             el.style.animation = `ticker-ltr ${value}s linear infinite`;
         }
 
@@ -1228,8 +1231,20 @@ TICKER_HTML = """
                 });
                 if(!s) s = `<div class="ticker-item">شبكة باشان الإعلامية</div> • `;
                 if(!w) w = `<div class="ticker-item">تغطية مستمرة عبر باشان</div> • `;
-                document.getElementById('top-ticker-content').innerHTML = s;
-                document.getElementById('ticker-content').innerHTML = w;
+                // Two identical copies create a continuous ticker with no long blank gap,
+                // including on narrow mobile screens.
+                const topEl = document.getElementById('top-ticker-content');
+                const bottomEl = document.getElementById('ticker-content');
+                const topMarkup = `<span class="ticker-copy">${s}</span><span class="ticker-copy" aria-hidden="true">${s}</span>`;
+                const bottomMarkup = `<span class="ticker-copy">${w}</span><span class="ticker-copy" aria-hidden="true">${w}</span>`;
+                if (topEl.dataset.tickerMarkup !== topMarkup) {
+                    topEl.innerHTML = topMarkup;
+                    topEl.dataset.tickerMarkup = topMarkup;
+                }
+                if (bottomEl.dataset.tickerMarkup !== bottomMarkup) {
+                    bottomEl.innerHTML = bottomMarkup;
+                    bottomEl.dataset.tickerMarkup = bottomMarkup;
+                }
                 const topSpeed = lastTickerSpeeds.top || 90;
                 const bottomSpeed = lastTickerSpeeds.bottom || 90;
                 applyTickerSpeed('top', topSpeed);
