@@ -85,6 +85,40 @@ def init_dbs():
             published_at TEXT,
             status TEXT DEFAULT 'approved'
         )''')
+        cursor_p.execute('''CREATE TABLE IF NOT EXISTS portal_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT UNIQUE NOT NULL,
+            category TEXT,
+            language TEXT DEFAULT 'ar'
+        )''')
+        default_portal_sources = [
+            ("BBC Arabic", "https://feeds.bbci.co.uk/arabic/rss.xml", "عالمي", "ar"),
+            ("Reuters World", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي", "en"),
+            ("i24NEWS", "https://www.i24news.tv/en/rss", "عالمي", "en")
+        ]
+        cursor_p.executemany("INSERT OR IGNORE INTO portal_sources (name, url, category, language) VALUES (?, ?, ?, ?)", default_portal_sources)
+        conn_p.commit()
+        conn_p.close()
+    except Exception:
+        pass
+
+def fetch_portal_news():
+    try:
+        conn_p = sqlite3.connect(DB_PORTAL)
+        cursor_p = conn_p.cursor()
+        cursor_p.execute("SELECT name, url, category FROM portal_sources")
+        for name, url, category in cursor_p.fetchall():
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:3]:
+                title = entry.title.strip()
+                summary = getattr(entry, 'summary', title)
+                pub_date = getattr(entry, 'published', 'حديثاً')
+                cursor_p.execute("""
+                    INSERT OR IGNORE INTO articles 
+                    (title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved')
+                """, (title, summary, title, summary, title, summary, category, name, "مراسلو الوكالات", pub_date))
         conn_p.commit()
         conn_p.close()
     except Exception:
@@ -99,6 +133,12 @@ scheduler = BackgroundScheduler()
 @app.on_event("startup")
 def startup_event():
     init_dbs()
+    fetch_portal_news()
+    try:
+        scheduler.add_job(fetch_portal_news, 'interval', hours=2)
+        scheduler.start()
+    except Exception:
+        pass
 
 @app.get("/logo.png")
 def get_logo():
@@ -125,7 +165,7 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث المباشر مع صندوق إضافة أخبار الشريط المباشر (/admin) ---
+# --- 3. لوحة تحكم البث المباشر (مع قسم الموسيقى وإضافة أخبار الشريط) (/admin) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -182,6 +222,19 @@ ADMIN_HTML = """
                 </form>
             </div>
 
+            <!-- قسم إدارة الموسيقى الذي طلبته عودته -->
+            <div class="card" style="border: 2px solid #2e7d32;">
+                <h2 style="color: #4ade80;">🎵 إدارة وتشغيل الموسيقى (مع الصور)</h2>
+                <form action="/set_active_song" method="post">
+                    <select name="song_name" required>
+                        <option value="AUTO_PLAYLIST">تشغيل كافة الأغاني بالتتابع تلقائياً 🔄</option>
+                        <option value="">إيقاف الموسيقى ❌</option>
+                        {% for song in music_files %}<option value="{{ song }}">{{ song }}</option>{% endfor %}
+                    </select><br>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تفعيل الموسيقى والانتقال للصور</button>
+                </form>
+            </div>
+
             <div class="card" style="border: 2px solid #c62828;">
                 <h2 style="color: #ff5252;">🚨 نشر خبر عاجل بارز</h2>
                 <form action="/set_breaking_banner" method="post">
@@ -193,7 +246,6 @@ ADMIN_HTML = """
         </div>
 
         <div>
-            <!-- صندوق إضافة خبر جديد للشريط مباشرة -->
             <div class="card" style="border: 2px solid #d4af37;">
                 <h2 style="color: #d4af37;">✍️ إضافة خبر مباشر للشريط</h2>
                 <form action="/admin/add_ticker_news" method="post">
@@ -290,6 +342,18 @@ def set_active_video(video_name: str = Form(...), username: str = Depends(verify
     CURRENT_STATE["active_video"] = f"/videos/{video_name}"
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
+@app.post("/set_active_song")
+def set_active_song(song_name: str = Form(None), username: str = Depends(verify_admin)):
+    if song_name == "AUTO_PLAYLIST":
+        CURRENT_STATE["media_type"] = "image"
+        CURRENT_STATE["active_song"] = "AUTO_PLAYLIST"
+    elif song_name:
+        CURRENT_STATE["media_type"] = "image" 
+        CURRENT_STATE["active_song"] = f"/music/{song_name}"
+    else:
+        CURRENT_STATE["active_song"] = ""
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
 @app.get("/reject/{news_id}")
 def reject_news(news_id: int, username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
@@ -300,7 +364,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. واجهة البث المباشر (/ticker) ---
+# --- 4. واجهة البث المباشر مع دعم الصوت والصور ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -342,7 +406,7 @@ TICKER_HTML = """
         <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], isAudioUnlocked = false;
+        let imageList = [], songList = [], currentSongPath = "", currentSongIndex = 0, isAudioUnlocked = false;
         const audioPlayer = document.getElementById('audio-player');
 
         function unlockAudio() {
@@ -362,6 +426,24 @@ TICKER_HTML = """
             } catch(e){}
         }
 
+        function setSongSource(targetUrl) {
+            if (currentSongPath !== targetUrl) {
+                currentSongPath = targetUrl;
+                audioPlayer.src = targetUrl;
+                audioPlayer.currentTime = 0;
+                audioPlayer.play().then(() => { audioPlayer.muted = false; }).catch(() => {});
+            } else if (audioPlayer.paused && currentSongPath !== "") {
+                audioPlayer.play().catch(() => {});
+            }
+        }
+
+        audioPlayer.addEventListener('ended', () => {
+            if (songList.length > 0) {
+                currentSongIndex = (currentSongIndex + 1) % songList.length;
+                setSongSource(songList[currentSongIndex]);
+            }
+        });
+
         async function checkLiveState() {
             try {
                 const state = await (await fetch('/api/live_state')).json();
@@ -380,6 +462,8 @@ TICKER_HTML = """
                     if(!document.getElementById('live-video')) {
                         stage.innerHTML = `<video id="live-video" class="video-card" src="${state.active_video}" autoplay loop playsinline></video>`;
                     }
+                    audioPlayer.pause();
+                    currentSongPath = "";
                 } else {
                     if(!document.getElementById('main-image')) {
                         stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
@@ -387,6 +471,14 @@ TICKER_HTML = """
                     if(imageList.length > 0) {
                         const idx = Math.floor(serverTime / 6) % imageList.length;
                         document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
+                    }
+                    if(state.active_song === "AUTO_PLAYLIST" && songList.length > 0) {
+                        setSongSource(songList[currentSongIndex]);
+                    } else if(state.active_song) {
+                        setSongSource(state.active_song);
+                    } else {
+                        audioPlayer.pause();
+                        currentSongPath = "";
                     }
                 }
             } catch(e){}
