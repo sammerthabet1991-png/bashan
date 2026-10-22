@@ -70,7 +70,7 @@ def init_dbs():
         conn.commit()
         conn.close()
 
-        # قاعدة بيانات الموقع الإخباري (مع نظام الـ pending والاعتماد)
+        # قاعدة بيانات الموقع الإخباري
         conn_p = sqlite3.connect(DB_PORTAL)
         cursor_p = conn_p.cursor()
         cursor_p.execute('''CREATE TABLE IF NOT EXISTS articles (
@@ -92,13 +92,19 @@ def init_dbs():
             language TEXT DEFAULT 'ar'
         )''')
         default_portal_sources = [
+            ("i24NEWS - Hebrew", "https://www.i24news.tv/he/rss", "عالمي", "he"),
             ("i24NEWS - English", "https://www.i24news.tv/en/rss", "عالمي", "en"),
-            ("Reuters - World", "https://www.reutersagency.com/feed/?best-topics=top-news", "عالمي", "en"),
             ("BBC Arabic", "https://feeds.bbci.co.uk/arabic/rss.xml", "عالمي", "ar"),
             ("الإمارات اليوم", "https://www.emaratalyoum.com/rss", "اقتصاد", "ar"),
             ("جريدة الاتحاد", "https://www.alittihad.ai/rss/section/local", "حدث اليوم", "ar")
         ]
         cursor_p.executemany("INSERT OR IGNORE INTO portal_sources (name, url, category, language) VALUES (?, ?, ?, ?)", default_portal_sources)
+        
+        # إضافة مقالات افتتاحية أولية لكل لغة لضمان عدم ظهور الشاشة فارغة
+        cursor_p.execute("INSERT OR IGNORE INTO articles (id, title, content, category, language, source_name, author, published_at, status) VALUES (1, 'شبكة باشان تنطلق بحلة جديدة', 'تطلق شبكة باشان الإعلامية بوابتها الإخبارية المتكاملة تغطي كافة الأحداث المحلية والعالمية.', 'عاجل', 'ar', 'باشان للإعلام', 'فريق التحرير', 'اليوم', 'approved')")
+        cursor_p.execute("INSERT OR IGNORE INTO articles (id, title, content, category, language, source_name, author, published_at, status) VALUES (2, 'Bashan News Portal Launched', 'Bashan media network launches its comprehensive news portal covering global and local updates.', 'عالمي', 'en', 'Bashan Media', 'Editorial Team', 'Today', 'approved')")
+        cursor_p.execute("INSERT OR IGNORE INTO articles (id, title, content, category, language, source_name, author, published_at, status) VALUES (3, 'רשת החדשות בשאן השקה', 'רשת החדשות בשאן משיקה את פורטל החדשות החדש שלה.', 'עולם', 'he', 'בשאן חדשות', 'צוות מערכת', 'היום', 'approved')")
+
         conn_p.commit()
         conn_p.close()
     except Exception:
@@ -106,33 +112,31 @@ def init_dbs():
 
 def fetch_all():
     try:
-        # جلب أخبار البث
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT name, url, category FROM sources")
         for name, url, category in cursor.fetchall():
             try:
                 feed = feedparser.parse(url)
-                for entry in feed.entries[:3]:
+                for entry in feed.entries[:2]:
                     cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name) VALUES (?, ?, ?)", (entry.title.strip(), category, name))
             except Exception:
                 pass
         conn.commit()
         conn.close()
 
-        # جلب مقالات وأخبار الموقع الإخباري تلقائياً (توضع بحالة pending بانتظار الاعتماد)
         conn_p = sqlite3.connect(DB_PORTAL)
         cursor_p = conn_p.cursor()
         cursor_p.execute("SELECT name, url, category, language FROM portal_sources")
         for name, url, category, lang in cursor_p.fetchall():
             try:
                 feed = feedparser.parse(url)
-                for entry in feed.entries[:3]:
+                for entry in feed.entries[:2]:
                     title = entry.title.strip()
                     content = getattr(entry, 'summary', title)
                     pub_date = getattr(entry, 'published', 'حديثاً')
                     cursor_p.execute("INSERT OR IGNORE INTO articles (title, content, category, language, source_name, author, published_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
-                                     (title, content, category, lang, name, "مراسلو الموقع", pub_date))
+                                     (title, content, category, lang, name, "مراسلو الوكالات", pub_date))
             except Exception:
                 pass
         conn_p.commit()
@@ -376,7 +380,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. لوحة تحكم الموقع الإخباري والمقالات مع نظام الاعتماد (/news/admin) ---
+# --- 4. لوحة تحكم الموقع الإخباري والمقالات (/news/admin) ---
 ADMIN_PORTAL_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -420,7 +424,7 @@ ADMIN_PORTAL_HTML = """
                     <option value="عالمي">عالمي</option>
                 </select>
                 <label>اللغة:</label>
-                <select name="language"><option value="ar">العربية</option><option value="en">English</option><option value="he">עברית</option></select>
+                <select name="language"><option value="ar">العربية (Arabic)</option><option value="en">English</option><option value="he">עברית (Hebrew)</option></select>
                 <label>اسم الكاتب:</label><input type="text" name="author" value="فريق تحرير باشان" required>
                 <label>اسم المصدر:</label><input type="text" name="source_name" value="خاص - باشان" required>
                 <label>محتوى المقال / الخبر:</label><textarea name="content" rows="4" required></textarea>
@@ -434,7 +438,7 @@ ADMIN_PORTAL_HTML = """
                 <tr><th>التصنيف والمصدر</th><th>العنوان</th><th>الإجراء</th></tr>
                 {% for item in pending_articles %}
                 <tr>
-                    <td><small>{{ item[3] }}<br><b>{{ item[5] }}</b></small></td>
+                    <td><small>{{ item[3] }} ({{ item[4] }})<br><b>{{ item[5] }}</b></small></td>
                     <td>{{ item[1] }}</td>
                     <td style="white-space:nowrap;">
                         <a href="/news/admin/approve/{{ item[0] }}"><button class="btn btn-approve">اعتماد</button></a>
@@ -487,35 +491,54 @@ def portal_delete_article(article_id: int, username: str = Depends(verify_portal
     return HTMLResponse("<script>window.location.href='/news/admin';</script>")
 
 
-# --- 5. الموقع الإخباري للزوار (/news) ---
+# --- 5. الموقع الإخباري للزوار (/news) بستايل الجزيرة / BBC الاحترافي ---
 PORTAL_MAIN_HTML = """
 <!DOCTYPE html>
-<html dir="rtl" lang="ar">
+<html dir="{{ 'rtl' if current_lang != 'en' else 'ltr' }}" lang="{{ current_lang }}">
 <head>
     <meta charset="UTF-8">
     <title>BASHAN NEWS - شبكة باشان الإخبارية</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #080b14; color: #eaeaea; margin: 0; padding: 0; }
-        header { background: #121824; border-bottom: 3px solid #d4af37; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
-        .logo { font-size: 24px; font-weight: 900; color: #d4af37; text-decoration: none; }
-        .nav-links { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
-        .nav-links a { color: #fff; text-decoration: none; padding: 8px 14px; background: #1a2332; border-radius: 6px; font-weight: bold; border: 1px solid #2a364f; }
-        .nav-links a:hover, .nav-links a.active { background: #d4af37; color: #000; }
-        .live-btn { background: #b71c1c !important; color: #fff !important; }
-        .sub-header { background: #101520; padding: 10px 30px; display: flex; gap: 10px; overflow-x: auto; border-bottom: 1px solid #1e293b; }
-        .sub-header button { background: none; border: none; color: #aaa; font-weight: bold; cursor: pointer; padding: 6px 12px; font-size: 15px; white-space: nowrap; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; padding: 0; }
+        header { background: #111827; border-bottom: 3px solid #d4af37; padding: 12px 40px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
+        .logo { font-size: 26px; font-weight: 900; color: #d4af37; text-decoration: none; display: flex; align-items: center; gap: 10px; letter-spacing: 1px; }
+        .nav-links { display: flex; gap: 12px; align-items: center; }
+        .nav-links a { color: #fff; text-decoration: none; padding: 7px 14px; background: #1f2937; border-radius: 4px; font-weight: bold; font-size: 13px; border: 1px solid #374151; transition: 0.2s; }
+        .nav-links a:hover, .nav-links a.active { background: #d4af37; color: #000; border-color: #d4af37; }
+        .live-btn { background: #b91c1c !important; border-color: #dc2626 !important; }
+
+        .sub-header { background: #161e2e; padding: 10px 40px; display: flex; gap: 15px; overflow-x: auto; border-bottom: 1px solid #2d3748; }
+        .sub-header button { background: none; border: none; color: #cbd5e0; font-weight: bold; cursor: pointer; padding: 6px 14px; font-size: 15px; white-space: nowrap; transition: 0.2s; }
         .sub-header button:hover, .sub-header button.active { color: #d4af37; border-bottom: 2px solid #d4af37; }
-        .container { max-width: 1200px; margin: 30px auto; padding: 0 20px; }
-        .grid-news { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; }
-        .article-card { background: #121824; border: 1px solid #1e293b; border-radius: 10px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; }
-        .article-card h3 { color: #d4af37; margin-top: 0; }
-        .meta { display: flex; justify-content: space-between; font-size: 12px; color: #888; border-top: 1px solid #1e293b; padding-top: 10px; margin-top: 15px; }
-        .badge { background: #7b1fa2; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+
+        .container { max-width: 1280px; margin: 30px auto; padding: 0 20px; }
+        
+        /* ستايل الجزيرة / BBC للخبر الرئيسي البارز */
+        .featured-hero { display: grid; grid-template-columns: 2fr 1fr; gap: 25px; margin-bottom: 40px; background: #121824; border: 1px solid #1e293b; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        .hero-main { padding: 35px; display: flex; flex-direction: column; justify-content: space-between; }
+        .hero-side { background: #1a2332; padding: 25px; border-left: 1px solid #2a364f; display: flex; flex-direction: column; gap: 15px; }
+        .badge { background: #7b1fa2; color: #fff; padding: 3px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block; width: fit-content; }
+        .hero-main h1 { color: #ffffff; font-size: 28px; margin: 15px 0; line-height: 1.4; }
+        .hero-main p { color: #9ca3af; font-size: 16px; line-height: 1.6; }
+
+        /* شبكة الأخبار والمقالات */
+        .grid-news { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 25px; }
+        .article-card { background: #121824; border: 1px solid #1e293b; border-radius: 8px; padding: 22px; display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.2s, border-color 0.2s; }
+        .article-card:hover { transform: translateY(-3px); border-color: #d4af37; }
+        .article-card h3 { color: #f9fafb; margin: 12px 0; font-size: 19px; line-height: 1.4; }
+        .article-card p { color: #9ca3af; font-size: 14px; line-height: 1.6; }
+        
+        .meta { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; border-top: 1px solid #1f2937; padding-top: 12px; margin-top: 15px; }
+
+        footer { text-align: center; padding: 30px; background: #111827; margin-top: 60px; border-top: 2px solid #d4af37; color: #9ca3af; font-size: 14px; }
+        
+        @media(max-width: 900px) { .featured-hero { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
+
     <header>
-        <a href="/news" class="logo">⚡ BASHAN NEWS</a>
+        <a href="/news?lang={{ current_lang }}" class="logo">⚡ BASHAN NEWS</a>
         <div class="nav-links">
             <a href="/news?lang=ar" class="{% if current_lang == 'ar' %}active{% endif %}">العربية</a>
             <a href="/news?lang=en" class="{% if current_lang == 'en' %}active{% endif %}">English</a>
@@ -524,39 +547,85 @@ PORTAL_MAIN_HTML = """
             <a href="/contact">اتصل بنا</a>
         </div>
     </header>
+
     <div class="sub-header">
-        <button onclick="filterCat('all')" class="active">الكل</button>
-        <button onclick="filterCat('عاجل')">عاجل</button>
-        <button onclick="filterCat('حدث اليوم')">حدث اليوم</button>
-        <button onclick="filterCat('أخبار السويداء المحلية')">أخبار السويداء</button>
-        <button onclick="filterCat('مقالات عامة')">مقالات عامة</button>
-        <button onclick="filterCat('اقتصاد')">اقتصاد</button>
-        <button onclick="filterCat('عالمي')">عالمي</button>
+        <button onclick="filterCat('all')" class="active">الكل / All</button>
+        <button onclick="filterCat('عاجل')">عاجل / Breaking</button>
+        <button onclick="filterCat('حدث اليوم')">حدث اليوم / Today</button>
+        <button onclick="filterCat('أخبار السويداء المحلية')">أخبار السويداء / Sweida</button>
+        <button onclick="filterCat('مقالات عامة')">مقالات / Articles</button>
+        <button onclick="filterCat('اقتصاد')">اقتصاد / Economy</button>
+        <button onclick="filterCat('عالمي')">عالمي / World</button>
     </div>
+
     <div class="container">
+        
+        {% if articles %}
+        <!-- الخبر الرئيسي البارز (ستايل BBC / الجزيرة) -->
+        <div class="featured-hero">
+            <div class="hero-main">
+                <div>
+                    <span class="badge">{{ articles[0][3] }}</span>
+                    <h1>{{ articles[0][1] }}</h1>
+                    <p>{{ articles[0][2][:220] }}...</p>
+                </div>
+                <div class="meta" style="border:none; padding:0; margin-top:20px;">
+                    <span>✍️ الكاتب: {{ articles[0][6] }} | 🌐 المصدر: {{ articles[0][5] }}</span>
+                    <span>📅 {{ articles[0][7] }}</span>
+                </div>
+            </div>
+            <div class="hero-side">
+                <h3 style="color: #d4af37; margin-top:0; border-bottom: 1px solid #2a364f; padding-bottom:8px;">أبرز العناوين</h3>
+                {% for item in articles[1:4] %}
+                <div style="font-size: 14px; border-bottom: 1px solid #2a364f; padding-bottom: 8px;">
+                    <span style="color:#d4af37; font-weight:bold;">•</span> {{ item[1][:75] }}...
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- شبكة الأخبار والمقالات -->
         <div class="grid-news">
-            {% for item in articles %}
+            {% for item in articles[1:] %}
             <div class="article-card" data-category="{{ item[3] }}">
                 <div>
                     <span class="badge">{{ item[3] }}</span>
-                    <h3 style="margin-top:10px;">{{ item[1] }}</h3>
-                    <p style="color:#ccc; line-height:1.6;">{{ item[2][:180] }}...</p>
+                    <h3>{{ item[1] }}</h3>
+                    <p>{{ item[2][:160] }}...</p>
                 </div>
                 <div class="meta">
-                    <span>✍️ الكاتب: {{ item[6] }} | 🌐 المصدر: {{ item[5] }}</span>
+                    <span>✍️ {{ item[6] }} | 🌐 {{ item[5] }}</span>
                     <span>📅 {{ item[7] }}</span>
                 </div>
             </div>
             {% endfor %}
         </div>
+        {% else %}
+        <div style="text-align: center; padding: 80px; color: #9ca3af; font-size: 18px;">
+            لا توجد مقالات أو أخبار معتمدة بهذه اللغّة حالياً. يرجى الاعتماد من لوحة التحكم.
+        </div>
+        {% endif %}
+
     </div>
+
+    <footer>
+        <p>جميع الحقوق محفوظة © BASHAN LINE & MEDIA AGENCY 2026</p>
+    </footer>
+
     <script>
         function filterCat(cat) {
             document.querySelectorAll('.sub-header button').forEach(b => b.classList.remove('active'));
             event.target.classList.add('active');
+            
+            const hero = document.querySelector('.featured-hero');
             document.querySelectorAll('.article-card').forEach(card => {
-                if(cat === 'all' || card.getAttribute('data-category') === cat) card.style.display = 'flex';
-                else card.style.display = 'none';
+                if(cat === 'all' || card.getAttribute('data-category') === cat) {
+                    card.style.display = 'flex';
+                    if(hero) hero.style.display = 'grid';
+                } else {
+                    card.style.display = 'none';
+                    if(hero && cat !== 'all') hero.style.display = 'none';
+                }
             });
         }
     </script>
@@ -568,7 +637,6 @@ PORTAL_MAIN_HTML = """
 def portal_home(lang: str = "ar"):
     conn = sqlite3.connect(DB_PORTAL)
     cursor = conn.cursor()
-    # يتم عرض المقالات المعتمدة (approved) فقط للزوار
     cursor.execute("SELECT id, title, content, category, language, source_name, author, published_at FROM articles WHERE language = ? AND status = 'approved' ORDER BY id DESC", (lang,))
     articles = cursor.fetchall()
     conn.close()
