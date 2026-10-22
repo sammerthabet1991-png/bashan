@@ -1,160 +1,96 @@
-const iframe = document.getElementById('youtube-frame');
-            if (iframe) { iframe.src = iframe.src; }
-            if (audioPlayer.src) { audioPlayer.muted = false; audioPlayer.play().catch(()=>{}); }
-            const vid = document.getElementById('live-video');
-            if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
-        }
+import os
+import sqlite3
+import secrets
+import time
+import feedparser
+from fastapi import FastAPI, Request, Form, Depends, HTTPException, status
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from apscheduler.schedulers.background import BackgroundScheduler
+from jinja2 import Template
+import uvicorn
 
-        async function loadAssets() {
-            try {
-                imageList = await (await fetch('/api/get_images')).json();
-                songList = await (await fetch('/api/get_songs')).json();
-                videoList = await (await fetch('/api/get_videos')).json();
-            } catch(e){}
-        }
+# --- 1. إعداد قواعد البيانات والمجلدات ---
+DB_NAME = "bashan_radio.db"
+DB_PORTAL = "bashan_portal.db"
+UPLOAD_DIR = "music_library"
+IMAGES_DIR = "images"
+VIDEOS_DIR = "videos"
 
-        function getYoutubeEmbedUrl(url) {
-            let videoId = "";
-            if (url.includes('youtu.be/')) {
-                videoId = url.split('youtu.be/')[1]?.split('?')[0];
-            } else if (url.includes('youtube.com/embed/')) {
-                videoId = url.split('embed/')[1]?.split('?')[0];
-            } else if (url.includes('youtube.com/watch')) {
-                let urlParams = new URLSearchParams(url.split('?')[1]);
-                videoId = urlParams.get('v');
-            } else if (url.includes('youtube.com/live/')) {
-                videoId = url.split('live/')[1]?.split('?')[0];
-            } else {
-                videoId = url.trim();
-            }
-            if (!videoId) return "";
-            return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`;
-        }
+for directory in [UPLOAD_DIR, IMAGES_DIR, VIDEOS_DIR]:
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
-        let lastTickerSpeeds = {top: null, bottom: null};
-        let playlistDurations = {};
-        let playlistSignature = "";
-        let lastPlaylistItem = "";
+default_vid_file = ""
+if os.path.exists(VIDEOS_DIR):
+    vids = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))]
+    if vids:
+        default_vid_file = f"/videos/{vids[0]}"
 
-        function syncAudio(serverTime, activeSongSetting) {
-            if (!songList.length) return;
-            let targetSongUrl = "";
-            let songOffset = 0;
-            if (activeSongSetting === "AUTO_PLAYLIST") {
-                const songDuration = 200;
-                const totalDuration = songList.length * songDuration;
-                const pTime = serverTime % totalDuration;
-                targetSongUrl = songList[Math.floor(pTime / songDuration)];
-                songOffset = pTime % songDuration;
-            } else {
-                targetSongUrl = activeSongSetting;
-                songOffset = serverTime % (audioPlayer.duration || 200);
-            }
-            if (!targetSongUrl) return;
-            if (currentSongPath !== targetSongUrl) {
-                currentSongPath = targetSongUrl;
-                audioPlayer.src = targetSongUrl;
-                try { audioPlayer.currentTime = songOffset; } catch(e) {}
-                audioPlayer.play().catch(() => {});
-            } else if (Math.abs(audioPlayer.currentTime - songOffset) > 2) {
-                try { audioPlayer.currentTime = songOffset; } catch(e) {}
-            }
-            if (audioPlayer.paused) audioPlayer.play().catch(() => {});
-        }
+CURRENT_STATE = {
+    "media_type": "youtube",
+    "active_song": "",
+    "active_video": default_vid_file,
+    "youtube_url": "https://www.youtube.com/watch?v=5qap5aO4i9A",
+    "breaking_banner": "",
+    "sweida_speed": 90,
+    "world_speed": 90,
+    "playlist": [],
+    "playlist_started_at": 0
+}
 
-        async function getPlaylistDurations(items) {
-            const signature = JSON.stringify(items);
-            if (signature === playlistSignature && Object.keys(playlistDurations).length) return;
-            playlistSignature = signature;
-            playlistDurations = {};
-            await Promise.all(items.map(item => new Promise(resolve => {
-                const el = document.createElement(item.kind === 'video' ? 'video' : 'audio');
-                el.preload = 'metadata';
-                el.src = item.url;
-                let done = false;
-                const finish = () => {
-                    if (done) return; done = true;
-                    playlistDurations[item.url] = (Number.isFinite(el.duration) && el.duration > 0) ? el.duration : 180;
-                    el.removeAttribute('src'); el.load(); resolve();
-                };
-                el.onloadedmetadata = finish;
-                el.onerror = () => { if (!done) { done = true; playlistDurations[item.url] = 180; resolve(); } };
-                setTimeout(() => { if (!done) { done = true; playlistDurations[item.url] = 180; resolve(); } }, 5000);
-            })));
-        }
+# --- 2. إعدادات الحماية ---
+security = HTTPBasic()
+ADMIN_USER = "admin"
+ADMIN_PASS = "Bashan2026!"
+PORTAL_ADMIN_USER = "portal_admin"
+PORTAL_ADMIN_PASS = "BashanNews2026!"
 
-        async function syncProgramPlaylist(state, serverTime) {
-            const items = state.playlist || [];
-            if (!items.length) return;
-            await getPlaylistDurations(items);
-            const elapsed = Math.max(0, serverTime - (state.playlist_started_at || serverTime));
-            const durations = items.map(item => Math.max(1, playlistDurations[item.url] || 180));
-            const total = durations.reduce((a,b) => a+b, 0);
-            let pos = elapsed % total, idx = 0;
-            while (idx < durations.length - 1 && pos >= durations[idx]) { pos -= durations[idx]; idx++; }
-            const item = items[idx];
-            if (!item) return;
-            const stage = document.getElementById('stage-container');
-            if (item.kind === 'video') {
-                let vid = document.getElementById('live-video');
-                if (!vid || lastMediaType !== 'playlist-video' || lastPlaylistItem !== item.url) {
-                    stage.innerHTML = `<video id="live-video" class="video-card" playsinline autoplay loop></video>`;
-                    vid = document.getElementById('live-video');
-                    vid.src = item.url;
-                    lastMediaType = 'playlist-video';
-                    lastPlaylistItem = item.url;
-                }
-                vid.muted = false;
-                if (Math.abs((vid.currentTime || 0) - pos) > 2) { try { vid.currentTime = pos; } catch(e) {} }
-                if (vid.paused) vid.play().catch(() => { vid.muted = true; vid.play().catch(()=>{}); });
-                audioPlayer.pause(); currentSongPath = "";
-            } else {
-                if (lastMediaType !== 'playlist-audio') {
-                    stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
-                    lastMediaType = 'playlist-audio';
-                    lastPlaylistItem = "";
-                }
-                if (imageList.length) {
-                    const imgIdx = Math.floor(serverTime / 6) % imageList.length;
-                    document.getElementById('main-image').style.backgroundImage = `url('${imageList[imgIdx]}')`;
-                }
-                if (currentSongPath !== item.url) {
-                    currentSongPath = item.url;
-                    audioPlayer.src = item.url;
-                }
-                if (Math.abs((audioPlayer.currentTime || 0) - pos) > 2) { try { audioPlayer.currentTime = pos; } catch(e) {} }
-                if (audioPlayer.paused) audioPlayer.play().catch(()=>{});
-            }
-        }
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    if not (secrets.compare_digest(credentials.username, ADMIN_USER) and secrets.compare_digest(credentials.password, ADMIN_PASS)):
+        raise HTTPException(status_code=401, detail="غير مسموح", headers={"WWW-Authenticate": "Basic"})
+    return credentials.username
 
-        async function checkLiveState() {
-            try {
-                const response = await fetch('/api/live_state');
-                const state = await response.json();
-                const serverTime = state.server_time || (Date.now() / 1000);
-                
-                if (lastTickerSpeeds.top !== state.sweida_speed) {
-                    document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
-                    lastTickerSpeeds.top = state.sweida_speed;
-                }
-                if (lastTickerSpeeds.bottom !== state.world_speed) {
-                    document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
-                    lastTickerSpeeds.bottom = state.world_speed;
-                }
-                
-                const banner = document.getElementById('breaking-banner');
-                if(state.breaking_banner) { document.getElementById('breaking-text').innerText = state.breaking_banner; banner.style.display = 'flex'; } else { banner.style.display = 'none'; }
-                
-                const stage = document.getElementById('stage-container');
-                
-                if(state.media_type === 'youtube' && state.youtube_url) {
-                    let embedUrl = getYoutubeEmbedUrl(state.youtube_url);
-                    if(embedUrl && (lastMediaType !== 'youtube' || lastYoutubeUrl !== state.youtube_url)) {
-                        stage.innerHTML = `<iframe id="youtube-frame" class="youtube-card" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
-                        lastMediaType = 'youtube';
-                        lastYoutubeUrl = state.youtube_url;
-                    }
-                    audioPlayer.pause();
-                    currentSongPath = "";
-                } 
-                else if(state.media_type === 'video') {
+def verify_portal_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    if not (secrets.compare_digest(credentials.username, PORTAL_ADMIN_USER) and secrets.compare_digest(credentials.password, PORTAL_ADMIN_PASS)):
+        raise HTTPException(status_code=401, detail="غير مسموح", headers={"WWW-Authenticate": "Basic"})
+    return credentials.username
+
+def init_dbs():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
+        default_sources = [
+            ("Sky News Arabia", "https://www.skynewsarabia.com/web/rss", "عالمي"),
+            ("RT Arabic", "https://arabic.rt.com/rss/", "عالمي")
+        ]
+        cursor.executemany("INSERT OR IGNORE INTO sources (name, url, category) VALUES (?, ?, ?)", default_sources)
+        conn.commit()
+        conn.close()
+
+        conn_p = sqlite3.connect(DB_PORTAL)
+        cursor_p = conn_p.cursor()
+        cursor_p.execute('''CREATE TABLE IF NOT EXISTS articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title_ar TEXT NOT NULL,
+            content_ar TEXT,
+            title_en TEXT,
+            content_en TEXT,
+            title_he TEXT,
+            content_he TEXT,
+            category TEXT NOT NULL,
+            source_name TEXT,
+            author TEXT,
+            published_at TEXT,
+            status TEXT DEFAULT 'approved'
+        )''')
+        cursor_p.execute('''CREATE TABLE IF NOT EXISTS portal_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT UNIQUE NOT NULL,
+            category TEXT,
+            language TEXT DEFAULT 'ar'
+        )''')
