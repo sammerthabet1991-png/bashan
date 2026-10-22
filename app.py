@@ -912,8 +912,14 @@ TICKER_HTML = """
         .ticker-item { display: inline-block; padding: 0 20px; }
         #touch-overlay { position: fixed; bottom: 62px; left: 12px; width: auto; height: auto; z-index: 9999; background: rgba(0,0,0,.72); color: #fff; border: 1px solid #d4af37; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-size: 14px; }
         .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
-        @keyframes ticker-ltr { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-50%, 0, 0); } }
-    </style>
+@keyframes ticker-ltr {
+    0% {
+        transform: translate3d(-50%, 0, 0);
+    }
+    100% {
+        transform: translate3d(0, 0, 0);
+    }
+}    </style>
 </head>
 <body>
     <button id="touch-overlay" onclick="enableAudioAndPlay()">🔊 تفعيل الصوت إذا كان المتصفح يمنع التشغيل التلقائي</button>
