@@ -29,10 +29,10 @@ if os.path.exists(VIDEOS_DIR):
         default_vid_file = f"/videos/{vids[0]}"
 
 CURRENT_STATE = {
-    "media_type": "youtube",  # البدء تلقائياً بوضع يوتيوب
+    "media_type": "youtube",
     "active_song": "",
     "active_video": default_vid_file,
-    "youtube_url": "https://www.youtube.com/watch?v=5qap5aO4i9A",  # رابط افتراضي مبدئي
+    "youtube_url": "https://www.youtube.com/watch?v=5qap5aO4i9A",
     "breaking_banner": "",
     "sweida_speed": 90,
     "world_speed": 90
@@ -271,31 +271,43 @@ ADMIN_HTML = """
 
         <div>
             <div class="card" style="border: 2px solid #d4af37;">
-                <h2 style="color: #d4af37;">✍️ إضافة خبر مباشر للشريط</h2>
+                <h2 style="color: #d4af37;">✍️ إضافة خبر جديد لأي شريط</h2>
                 <form action="/admin/add_ticker_news" method="post">
                     <label>عنوان الخبر:</label>
                     <input type="text" name="title" placeholder="اكتب نص الخبر هنا..." required>
-                    <label>التصنيف:</label>
+                    <label>اختر الشريط:</label>
                     <select name="category">
-                        <option value="السويداء">أخبار السويداء (شريط علوي)</option>
-                        <option value="عالمي">أخبار عالمية (شريط سفلي)</option>
+                        <option value="السويداء">أخبار السويداء (شريط علوي 🟣)</option>
+                        <option value="عالمي">أخبار عالمية (شريط سفلي ⚡)</option>
                     </select><br>
                     <button type="submit" class="btn btn-approve" style="width:100%;">نشر مباشر في الشريط 🚀</button>
                 </form>
             </div>
 
-            <!-- جدول إدارة، تعديل، وحذف أخبار الشريطين -->
-            <div class="card">
-                <h2>إدارة، تعديل، وحذف أخبار الشريطين</h2>
+            <!-- قسم مستقل بالكامل للشريط العلوي (السويداء) -->
+            <div class="card" style="border: 2px solid #7b1fa2;">
+                <h2 style="color: #ab47bc;">🟣 إدارة شريط السويداء (العلوي)</h2>
                 <table>
-                    <tr><th>الشريط</th><th>الخبر</th><th>الإجراءات</th></tr>
-                    {% for item in news %}
+                    <tr><th>الخبر</th><th>الإجراءات</th></tr>
+                    {% for item in sweida_news %}
                     <tr>
-                        <td>
-                            <span class="badge" style="background:{% if item[2] == 'السويداء' %}#7b1fa2{% else %}#d4af37{% endif %}; color:#fff;">
-                                {{ item[2] }}
-                            </span>
+                        <td>{{ item[1] }}</td>
+                        <td style="white-space:nowrap;">
+                            <a href="/admin/edit_news/{{ item[0] }}"><button class="btn btn-edit" style="padding:3px 8px; font-size:11px;">تعديل ✏️</button></a>
+                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:3px 8px; font-size:11px;">حذف 🗑️</button></a>
                         </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+
+            <!-- قسم مستقل بالكامل للشريط السفلي (العالمي) -->
+            <div class="card" style="border: 2px solid #d4af37;">
+                <h2 style="color: #d4af37;">⚡ إدارة الشريط العالمي (السفلي)</h2>
+                <table>
+                    <tr><th>الخبر</th><th>الإجراءات</th></tr>
+                    {% for item in world_news %}
+                    <tr>
                         <td>{{ item[1] }}</td>
                         <td style="white-space:nowrap;">
                             <a href="/admin/edit_news/{{ item[0] }}"><button class="btn btn-edit" style="padding:3px 8px; font-size:11px;">تعديل ✏️</button></a>
@@ -333,10 +345,10 @@ EDIT_NEWS_HTML = """
         <form action="/admin/update_news/{{ news_item[0] }}" method="post">
             <label>نص الخبر:</label>
             <textarea name="title" rows="3" required>{{ news_item[1] }}</textarea>
-            <label>التصنيف (الشريط):</label>
+            <label>الشريط المستهدف:</label>
             <select name="category">
-                <option value="السويداء" {% if news_item[2] == 'السويداء' %}selected{% endif %}>أخبار السويداء (شريط علوي)</option>
-                <option value="عالمي" {% if news_item[2] == 'عالمي' %}selected{% endif %}>أخبار عالمية (شريط سفلي)</option>
+                <option value="السويداء" {% if news_item[2] == 'السويداء' %}selected{% endif %}>أخبار السويداء (شريط علوي 🟣)</option>
+                <option value="عالمي" {% if news_item[2] == 'عالمي' %}selected{% endif %}>أخبار عالمية (شريط سفلي ⚡)</option>
             </select>
             <button type="submit" class="btn btn-save">حفظ التعديلات ✓</button>
         </form>
@@ -350,13 +362,15 @@ EDIT_NEWS_HTML = """
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category, source_name, status FROM news ORDER BY id DESC LIMIT 60")
-    news = cursor.fetchall()
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE category = 'السويداء' ORDER BY id DESC LIMIT 30")
+    sweida_news = cursor.fetchall()
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE category = 'عالمي' ORDER BY id DESC LIMIT 30")
+    world_news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
     video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.mkv', '.avi', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
     return Template(ADMIN_HTML).render(
-        news=news, music_files=music_files, video_files=video_files, 
+        sweida_news=sweida_news, world_news=world_news, music_files=music_files, video_files=video_files, 
         current_banner=CURRENT_STATE["breaking_banner"],
         sweida_speed=CURRENT_STATE["sweida_speed"],
         world_speed=CURRENT_STATE["world_speed"],
@@ -444,24 +458,6 @@ def clear_breaking_banner(username: str = Depends(verify_admin)):
     CURRENT_STATE["breaking_banner"] = ""
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-@app.post("/set_active_video")
-def set_active_video(video_name: str = Form(...), username: str = Depends(verify_admin)):
-    CURRENT_STATE["media_type"] = "video"
-    CURRENT_STATE["active_video"] = f"/videos/{video_name}"
-    return HTMLResponse("<script>window.location.href='/admin';</script>")
-
-@app.post("/set_active_song")
-def set_active_song(song_name: str = Form(None), username: str = Depends(verify_admin)):
-    if song_name == "AUTO_PLAYLIST":
-        CURRENT_STATE["media_type"] = "image"
-        CURRENT_STATE["active_song"] = "AUTO_PLAYLIST"
-    elif song_name:
-        CURRENT_STATE["media_type"] = "image" 
-        CURRENT_STATE["active_song"] = f"/music/{song_name}"
-    else:
-        CURRENT_STATE["active_song"] = ""
-    return HTMLResponse("<script>window.location.href='/admin';</script>")
-
 @app.get("/reject/{news_id}")
 def reject_news(news_id: int, username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
@@ -472,7 +468,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. واجهة البث المباشر الموحد المتزامن (تشغيل فوري مباشر) ---
+# --- 4. واجهة البث المباشر الموحد المتزامن ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -487,8 +483,7 @@ TICKER_HTML = """
         .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; pointer-events: none; }
         .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; box-sizing: border-box; padding: 15px; }
-        .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; transition: background-image 1.2s ease-in-out; position: relative; }
-        video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); object-fit: contain; background-color: #000; pointer-events: none; }
+        .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; position: relative; }
         .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.85); background-color: #000; }
         .breaking-banner { position: absolute; bottom: 50px; left: 0; width: 100%; background: linear-gradient(90deg, #b71c1c, #d32f2f, #b71c1c); color: #ffffff; padding: 6px 15px; box-sizing: border-box; font-size: 16px; font-weight: 900; z-index: 999; display: none; align-items: center; border-top: 2px solid #ffeb3b; pointer-events: none; }
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; box-sizing: border-box; pointer-events: none; }
@@ -508,32 +503,18 @@ TICKER_HTML = """
         <div class="ticker-wrap"><div class="ticker-move" id="top-ticker-content">جاري التحميل...</div></div>
     </div>
     <div class="center-stage" id="stage-container"><div class="image-card" id="main-image"></div></div>
-    <audio id="audio-player" preload="auto" style="display:none;"></audio>
     <div class="breaking-banner" id="breaking-banner"><span>🔴 عاجل: </span><span id="breaking-text"></span></div>
     <div class="ticker-container">
         <div class="ticker-title">أخبار عالمية</div>
         <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], videoList = [], currentSongPath = "", isAudioUnlocked = false, lastMediaType = "";
-        const audioPlayer = document.getElementById('audio-player');
+        let lastMediaType = "";
 
         function enableAudioAndPlay() {
-            isAudioUnlocked = true;
             document.getElementById('touch-overlay').style.display = 'none';
             const iframe = document.getElementById('youtube-frame');
-            if (iframe) {
-                // إعادة تنشيط الإطار لضمان عمل البث والصوت فور النقر على الشاشة الأولى
-                iframe.src = iframe.src;
-            }
-        }
-
-        async function loadAssets() {
-            try {
-                imageList = await (await fetch('/api/get_images')).json();
-                songList = await (await fetch('/api/get_songs')).json();
-                videoList = await (await fetch('/api/get_videos')).json();
-            } catch(e){}
+            if (iframe) { iframe.src = iframe.src; }
         }
 
         function getYoutubeEmbedUrl(url) {
@@ -551,7 +532,6 @@ TICKER_HTML = """
                 videoId = url.trim();
             }
             if (!videoId) return "";
-            // معاملات تضمن التشغيل الفوري المباشر وإخفاء الشعار وأزرار التحكم
             return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&showinfo=0&modestbranding=1&loop=1&playlist=${videoId}&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`;
         }
 
@@ -579,40 +559,9 @@ TICKER_HTML = """
                             lastMediaType = 'youtube';
                         }
                     }
-                    audioPlayer.pause();
-                    currentSongPath = "";
                 } 
-                else if(state.media_type === 'video') {
-                    if(videoList.length > 0) {
-                        let totalDurationPerVideo = 60;
-                        let totalPlaylistTime = serverTime % (videoList.length * totalDurationPerVideo);
-                        let currentVidIndex = Math.floor(totalPlaylistTime / totalDurationPerVideo);
-                        let targetVideoFile = videoList[currentVidIndex];
-
-                        let vidEl = document.getElementById('live-video');
-                        if(!vidEl || vidEl.getAttribute('data-src') !== targetVideoFile) {
-                            stage.innerHTML = `<video id="live-video" class="video-card" data-src="${targetVideoFile}" src="${targetVideoFile}" autoplay playsinline></video>`;
-                            lastMediaType = 'video';
-                            vidEl = document.getElementById('live-video');
-                        }
-                    }
-                    audioPlayer.pause();
-                    currentSongPath = "";
-                } 
-                else if(state.media_type === 'none') {
-                    stage.innerHTML = `<div class="image-card" style="background:#000;"></div>`;
-                    audioPlayer.pause();
-                    currentSongPath = "";
-                }
                 else {
-                    if(!document.getElementById('main-image') || lastMediaType !== 'image') {
-                        stage.innerHTML = `<div class="image-card" id="main-image"></div>`;
-                        lastMediaType = 'image';
-                    }
-                    if(imageList.length > 0) {
-                        const idx = Math.floor(serverTime / 6) % imageList.length;
-                        document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
-                    }
+                    stage.innerHTML = `<div class="image-card" style="background:#000;"></div>`;
                 }
             } catch(e){}
         }
@@ -635,7 +584,7 @@ TICKER_HTML = """
             } catch(e){}
         }
 
-        loadAssets(); checkLiveState(); updateTickers();
+        checkLiveState(); updateTickers();
         setInterval(checkLiveState, 400);
         setInterval(updateTickers, 10000);
     </script>
@@ -656,8 +605,7 @@ def get_approved_news():
     conn.close()
     return [{"title": r[0], "category": r[1]} for r in rows]
 
-
-# --- 5. لوحة تحكم الموقع الإخباري (/news/admin) ---
+# --- 5. لوحة تحكم الموقع الإخباري ---
 ADMIN_PORTAL_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -683,26 +631,19 @@ ADMIN_PORTAL_HTML = """
     <h1>📰 BASHAN — لوحة تحكم الموقع الإخباري 🔒</h1>
     <div style="margin-top: 15px;">
         <a href="/admin" class="btn-back">⬅ العودة إلى لوحة تحكم البث المباشر</a>
-        <a href="/news" target="_blank" style="color: #60a5fa; font-weight: bold; margin-right: 15px;">معاينة الموقع الإخباري ↗</a>
     </div>
-    
     <div class="grid">
         <div class="card">
-            <h2 style="color: #d4af37;">✍️ إضافة خبر للموقع باللغات الثلاث</h2>
+            <h2>✍️ إضافة خبر للموقع باللغات الثلاث</h2>
             <form action="/news/admin/add" method="post">
                 <label>التصنيف:</label>
                 <select name="category">
                     <option value="عاجل">عاجل</option>
                     <option value="حدث اليوم">حدث اليوم</option>
-                    <option value="أخبار السويداء المحلية">أخبار السويداء المحلية</option>
-                    <option value="مقالات عامة">مقالات عامة</option>
-                    <option value="اقتصاد">اقتصاد</option>
                     <option value="عالمي">عالمي</option>
                 </select>
-                <label style="color:#d4af37;">🇸🇦 العنوان بالعربية:</label><input type="text" name="title_ar" required>
+                <label>العنوان بالعربية:</label><input type="text" name="title_ar" required>
                 <label>المحتوى بالعربية:</label><textarea name="content_ar" rows="3" required></textarea>
-                <label>الإنجليزية:</label><input type="text" name="title_en"><textarea name="content_en" rows="2"></textarea>
-                <label>العبرية:</label><input type="text" name="title_he"><textarea name="content_he" rows="2"></textarea>
                 <label>الكاتب:</label><input type="text" name="author" value="فريق تحرير باشان" required>
                 <button type="submit" class="btn btn-approve" style="width:100%; padding:10px; margin-top:10px;">نشر للموقع 🚀</button>
             </form>
@@ -731,11 +672,11 @@ def portal_admin(username: str = Depends(verify_portal_admin)):
     return Template(ADMIN_PORTAL_HTML).render(articles=articles)
 
 @app.post("/news/admin/add")
-def portal_add_article(title_ar: str = Form(...), content_ar: str = Form(...), title_en: str = Form(""), content_en: str = Form(""), title_he: str = Form(""), content_he: str = Form(""), category: str = Form(...), author: str = Form(...), username: str = Depends(verify_portal_admin)):
+def portal_add_article(title_ar: str = Form(...), content_ar: str = Form(...), category: str = Form(...), author: str = Form(...), username: str = Depends(verify_portal_admin)):
     conn = sqlite3.connect(DB_PORTAL)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO articles (title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'خاص', ?, ?, 'approved')",
-                   (title_ar, content_ar, title_en or title_ar, content_en or content_ar, title_he or title_ar, content_he or content_ar, category, author, time.strftime('%Y-%m-%d %H:%M')))
+                   (title_ar, content_ar, title_ar, content_ar, title_ar, content_ar, category, author, time.strftime('%Y-%m-%d %H:%M')))
     conn.commit()
     conn.close()
     return HTMLResponse("<script>window.location.href='/news/admin';</script>")
@@ -749,105 +690,15 @@ def portal_delete_article(article_id: int, username: str = Depends(verify_portal
     conn.close()
     return HTMLResponse("<script>window.location.href='/news/admin';</script>")
 
-
-# --- 6. صفحة قراءة المقال (/news/read/{id}) ---
-PORTAL_READ_HTML = """
-<!DOCTYPE html>
-<html dir="{{ 'ltr' if lang == 'en' else 'rtl' }}" lang="{{ lang }}">
-<head>
-    <meta charset="UTF-8">
-    <title>{{ title }} - BASHAN NEWS</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; padding: 0; }
-        header { background: #111827; border-bottom: 3px solid #d4af37; padding: 12px 40px; display: flex; justify-content: space-between; align-items: center; }
-        .container { max-width: 900px; margin: 40px auto; padding: 30px; background: #121824; border: 1px solid #1e293b; border-radius: 10px; }
-        h1 { color: #ffffff; font-size: 32px; margin: 20px 0; }
-        .content { font-size: 18px; line-height: 1.9; color: #d1d5db; white-space: pre-line; }
-        .back-btn { display: inline-block; margin-top: 35px; background: #d4af37; color: #000; padding: 10px 22px; border-radius: 6px; text-decoration: none; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <header><a href="/news?lang={{ lang }}" style="color: #d4af37; font-weight:900; text-decoration:none;">⚡ BASHAN NEWS</a></header>
-    <div class="container">
-        <h1>{{ title }}</h1>
-        <div class="content">{{ content }}</div>
-        <a href="/news?lang={{ lang }}" class="back-btn">← العودة إلى الأخبار الرئيسية</a>
-    </div>
-</body>
-</html>
-"""
-
-@app.get("/news/read/{article_id}", response_class=HTMLResponse)
-def read_article(article_id: int, lang: str = "ar"):
-    conn = sqlite3.connect(DB_PORTAL)
-    cursor = conn.cursor()
-    cursor.execute("SELECT title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at FROM articles WHERE id = ?", (article_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if not row: return HTMLResponse("المقال غير موجود", status_code=404)
-    title = row[2] if lang=="en" else (row[4] if lang=="he" else row[0])
-    content = row[3] if lang=="en" else (row[5] if lang=="he" else row[1])
-    return Template(PORTAL_READ_HTML).render(title=title, content=content, lang=lang)
-
-
-# --- 7. الموقع الإخباري للزوار (/news) ---
-PORTAL_MAIN_HTML = """
-<!DOCTYPE html>
-<html dir="{{ 'ltr' if current_lang == 'en' else 'rtl' }}" lang="{{ current_lang }}">
-<head>
-    <meta charset="UTF-8">
-    <title>BASHAN NEWS</title>
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0b0f19; color: #f3f4f6; margin: 0; padding: 0; }
-        header { background: #111827; border-bottom: 3px solid #d4af37; padding: 12px 40px; display: flex; justify-content: space-between; align-items: center; }
-        .logo { font-size: 26px; font-weight: 900; color: #d4af37; text-decoration: none; }
-        .nav-links a { color: #fff; text-decoration: none; padding: 7px 14px; background: #1f2937; border-radius: 4px; font-weight: bold; font-size: 13px; margin-left: 5px; }
-        .nav-links a.active { background: #d4af37; color: #000; }
-        .live-btn { background: #b91c1c !important; }
-        .container { max-width: 1280px; margin: 30px auto; padding: 0 20px; }
-        .grid-news { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 25px; }
-        .article-card { background: #121824; border: 1px solid #1e293b; border-radius: 8px; padding: 22px; }
-        .article-card h3 a { color: #f9fafb; text-decoration: none; font-size: 19px; }
-        .article-card h3 a:hover { color: #d4af37; }
-    </style>
-</head>
-<body>
-    <header>
-        <a href="/news?lang={{ current_lang }}" class="logo">⚡ BASHAN NEWS</a>
-        <div class="nav-links">
-            <a href="/news?lang=ar" class="{% if current_lang == 'ar' %}active{% endif %}">العربية</a>
-            <a href="/news?lang=en" class="{% if current_lang == 'en' %}active{% endif %}">English</a>
-            <a href="/news?lang=he" class="{% if current_lang == 'en' %}active{% endif %}">עברית</a>
-            <a href="/ticker" class="live-btn" target="_blank">🔴 البث المباشر</a>
-        </div>
-    </header>
-    <div class="container">
-        <div class="grid-news">
-            {% for item in articles %}
-            <div class="article-card">
-                <h3><a href="/news/read/{{ item.id }}?lang={{ current_lang }}">{{ item.title }}</a></h3>
-                <p style="color:#9ca3af; font-size:14px;">{{ item.content[:160] }}...</p>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-</body>
-</html>
-"""
-
 @app.get("/news", response_class=HTMLResponse)
 def portal_home(lang: str = "ar"):
     conn = sqlite3.connect(DB_PORTAL)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title_ar, content_ar, title_en, content_en, title_he, content_he, category, source_name, author, published_at FROM articles WHERE status = 'approved' ORDER BY id DESC")
+    cursor.execute("SELECT id, title_ar, content_ar, category, source_name, author, published_at FROM articles WHERE status = 'approved' ORDER BY id DESC")
     rows = cursor.fetchall()
     conn.close()
-    articles = [{"id": r[0], "title": (r[3] if lang=="en" else (r[5] if lang=="he" else r[1])), "content": (r[4] if lang=="en" else (r[6] if lang=="he" else r[2]))} for r in rows]
-    return Template(PORTAL_MAIN_HTML).render(articles=articles, current_lang=lang)
-
-@app.get("/contact", response_class=HTMLResponse)
-def contact_page():
-    return '<body style="background:#080b14; color:#fff; text-align:center; padding:50px;"><h1>اتصل بنا: contact@bashanline.com</h1><br><a href="/news">← العودة للموقع</a></body>'
+    articles = [{"id": r[0], "title": r[1], "content": r[2]} for r in rows]
+    return HTMLResponse(f"<h1>موقع باشان الإخباري</h1><ul>" + "".join([f"<li>{a['title']}</li>" for a in articles]) + "</ul>")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
