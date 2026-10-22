@@ -348,7 +348,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- 4. واجهة البث المباشر المحدثة ---
+# --- 4. واجهة البث المباشر (إصلاح تكرار الصوت) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -427,13 +427,17 @@ TICKER_HTML = """
         let currentVideoSrc = "";
         let currentSongIndex = 0;
         let isAudioUnlocked = false;
+        let isSongPlaying = false;
 
         function unlockAudio() {
             if (isAudioUnlocked) return;
             const vid = document.getElementById('live-video');
             if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
             const aud = document.getElementById('audio-player');
-            if (aud) { aud.muted = false; aud.play().catch(()=>{}); }
+            if (aud) { 
+                aud.muted = false; 
+                if (aud.src) aud.play().catch(()=>{}); 
+            }
             
             isAudioUnlocked = true;
             const overlay = document.getElementById('touch-overlay');
@@ -455,14 +459,26 @@ TICKER_HTML = """
 
         const audioPlayer = document.getElementById('audio-player');
 
-        // الانتقال للأغنية التالية فور انتهاء الأغنية الحالية
+        // الانتقال التلقائي بين الأغاني عند نهايتها
         audioPlayer.addEventListener('ended', () => {
+            isSongPlaying = false;
             if (songList.length > 0) {
                 currentSongIndex = (currentSongIndex + 1) % songList.length;
-                audioPlayer.src = songList[currentSongIndex];
-                audioPlayer.play().catch(()=>{});
+                playSong(songList[currentSongIndex]);
             }
         });
+
+        function playSong(url) {
+            if (audioPlayer.src !== window.location.origin + url && audioPlayer.src !== url) {
+                audioPlayer.src = url;
+                isSongPlaying = false;
+            }
+            if (!isSongPlaying) {
+                audioPlayer.play().then(() => {
+                    isSongPlaying = true;
+                }).catch(() => {});
+            }
+        }
 
         async function checkLiveState() {
             try {
@@ -497,6 +513,7 @@ TICKER_HTML = """
                         currentMediaType = 'video';
                         currentVideoSrc = state.active_video;
                         audioPlayer.pause();
+                        isSongPlaying = false;
                         
                         stage.innerHTML = `<video id="live-video" class="video-card" src="${currentVideoSrc}" autoplay loop playsinline></video>`;
                     }
@@ -523,23 +540,17 @@ TICKER_HTML = """
                         }
                     }
 
-                    // تشغيل الموسيقى بسلاسة دون إعادة الضغط أو الانقطاع
+                    // تشغيل الموسيقى دون التسبب في تقطيع أو تكرار
                     if (state.active_song === "AUTO_PLAYLIST" && songList.length > 0) {
-                        if (!audioPlayer.src || audioPlayer.paused) {
-                            if (!audioPlayer.src) {
-                                audioPlayer.src = songList[currentSongIndex];
-                            }
-                            audioPlayer.play().catch(()=>{});
+                        if (!isSongPlaying) {
+                            playSong(songList[currentSongIndex]);
                         }
                     } else if (state.active_song && state.active_song !== "AUTO_PLAYLIST") {
-                        const fullPath = window.location.origin + state.active_song;
-                        if (audioPlayer.src !== fullPath) {
-                            audioPlayer.src = state.active_song;
-                            audioPlayer.play().catch(()=>{});
-                        }
+                        playSong(state.active_song);
                     } else if (!state.active_song) {
                         audioPlayer.pause();
                         audioPlayer.src = "";
+                        isSongPlaying = false;
                     }
                 }
 
