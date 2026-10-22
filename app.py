@@ -747,7 +747,10 @@ TICKER_HTML = """
         .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 50px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
         .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 16px; white-space: nowrap; }
         .center-stage { position: absolute; top: 50px; left: 0; width: 100%; height: calc(100% - 100px); display: flex; justify-content: center; align-items: center; z-index: 10; padding: 15px; box-sizing: border-box; }
-        .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-size: contain; background-repeat: no-repeat; background-position: center; background-color: #000; }
+        .image-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-color: #000; overflow: hidden; position: relative; }
+        .image-card img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .image-card img.slide-in { animation: imageSlideIn .85s ease both; }
+        @keyframes imageSlideIn { from { transform: translateX(100%); opacity: .7; } to { transform: translateX(0); opacity: 1; } }
         video.video-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); object-fit: contain; background-color: #000; pointer-events: none; }
         .youtube-card { width: 100%; height: 100%; max-width: 1250px; max-height: 700px; border-radius: 12px; border: 2px solid rgba(212, 175, 55, 0.4); background-color: #000; pointer-events: none; }
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; pointer-events: none; }
@@ -775,8 +778,8 @@ TICKER_HTML = """
         <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", activeVideoUrl = "";
-        let songDurations = [], songDurationsReady = false, audioUnlocked = false;
+        let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", activeVideoUrl = "", currentImageIndex = -1;
+        let songDurations = [], songDurationsReady = false, videoDurations = [], videoDurationsReady = false, audioUnlocked = false;
         const audioPlayer = document.getElementById('audio-player');
 
         function enableAudioAndPlay() {
@@ -789,7 +792,7 @@ TICKER_HTML = """
 
         async function loadAssets() {
             try {
-                imageList = await (await fetch('/api/get_images')).json();
+                imageList = (await (await fetch('/api/get_images')).json()).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
                 songList = await (await fetch('/api/get_songs')).json();
                 videoList = await (await fetch('/api/get_videos')).json();
                 songDurations = await Promise.all(songList.map(src => new Promise(resolve => {
@@ -804,7 +807,40 @@ TICKER_HTML = """
                     setTimeout(() => finish(0), 5000);
                 })));
                 songDurationsReady = true;
+                // اقرأ مدد كل الفيديوهات حتى يستطيع كل مشاهد حساب الفيديو الحالي
+                // والموضع داخله اعتماداً على ساعة الخادم نفسها.
+                videoDurations = await Promise.all(videoList.map(src => new Promise(resolve => {
+                    const probe = document.createElement('video');
+                    let settled = false;
+                    const finish = value => { if (!settled) { settled = true; resolve(value); } };
+                    probe.preload = 'metadata';
+                    probe.onloadedmetadata = () => finish(Number.isFinite(probe.duration) ? probe.duration : 0);
+                    probe.onerror = () => finish(0);
+                    probe.src = src;
+                    probe.load();
+                    setTimeout(() => finish(0), 8000);
+                })));
+                videoDurationsReady = true;
             } catch(e){}
+        }
+
+        function getSynchronizedVideo(state, serverTime) {
+            if (!videoList.length) return null;
+            const startIndex = Math.max(0, videoList.indexOf(state.active_video));
+            const ordered = videoList.slice(startIndex).concat(videoList.slice(0, startIndex));
+            const durationByUrl = new Map(videoList.map((url, i) => [url, videoDurations[i] || 0]));
+            const valid = ordered.map(url => ({url, duration: durationByUrl.get(url) || 0})).filter(item => item.duration > 0);
+            if (!videoDurationsReady || !valid.length) {
+                return {url: state.active_video || videoList[0], offset: 0, fallback: true};
+            }
+            const totalDuration = valid.reduce((sum, item) => sum + item.duration, 0);
+            const elapsed = Math.max(0, serverTime - (state.video_playlist_started_at || serverTime));
+            let position = elapsed % totalDuration;
+            for (const item of valid) {
+                if (position < item.duration) return {url: item.url, offset: position, fallback: false};
+                position -= item.duration;
+            }
+            return {url: valid[0].url, offset: 0, fallback: false};
         }
 
         function getYoutubeEmbedUrl(url, startSeconds = 0) {
@@ -822,19 +858,7 @@ TICKER_HTML = """
                 const state = await response.json();
                 const serverTime = state.server_time || (Date.now() / 1000);
 
-                // مزامنة الفيديو المحلي على ساعة الخادم لدى جميع المشاهدين.
-                if (state.media_type === 'video') {
-                    const v = document.getElementById('live-video');
-                    if (v && v.readyState >= 1 && Number.isFinite(v.duration) && v.duration > 0) {
-                        const elapsed = Math.max(0, serverTime - (state.video_playlist_started_at || serverTime));
-                        const target = elapsed % v.duration;
-                        if (Math.abs(v.currentTime - target) > 1.25) {
-                            try { v.currentTime = target; } catch(e) {}
-                        }
-                        v.muted = !audioUnlocked;
-                        v.play().catch(()=>{});
-                    }
-                }
+                // تتم مزامنة قائمة الفيديوهات في فرع العرض أدناه، باستخدام ساعة الخادم.
 
                 // مزامنة الموسيقى المنفصلة مع خط زمني موحد لجميع المشاهدين.
                 if (state.active_song) {
@@ -886,19 +910,49 @@ TICKER_HTML = """
                         lastMediaType = 'youtube'; lastYoutubeUrl = state.youtube_url;
                     }
                 } else if(state.media_type === 'video') {
-                    if (state.active_video) {
-                        let targetVid = state.active_video;
+                    if (state.active_video || videoList.length) {
+                        const selection = getSynchronizedVideo(state, serverTime);
+                        const targetVid = selection ? selection.url : state.active_video;
                         let vidEl = document.getElementById('live-video');
-                        if (!vidEl || lastMediaType !== 'video' || activeVideoUrl !== targetVid) {
-                            stage.innerHTML = `<video id="live-video" class="video-card" src="${targetVid}" autoplay playsinline muted loop></video>`;
-                            lastMediaType = 'video'; activeVideoUrl = targetVid;
+                        if (!vidEl || lastMediaType !== 'video') {
+                            stage.innerHTML = `<video id="live-video" class="video-card" autoplay playsinline muted></video>`;
+                            vidEl = document.getElementById('live-video');
+                            lastMediaType = 'video';
+                            activeVideoUrl = '';
                         }
+                        if (targetVid && activeVideoUrl !== targetVid) {
+                            vidEl.src = targetVid;
+                            vidEl.load();
+                            activeVideoUrl = targetVid;
+                        }
+                        if (selection && vidEl.readyState >= 1 && Number.isFinite(vidEl.duration) && vidEl.duration > 0) {
+                            const desired = selection.fallback ? 0 : Math.min(selection.offset, Math.max(0, vidEl.duration - 0.25));
+                            if (Math.abs(vidEl.currentTime - desired) > 1.25) {
+                                try { vidEl.currentTime = desired; } catch(e) {}
+                            }
+                        }
+                        vidEl.loop = !!(selection && selection.fallback);
+                        vidEl.muted = !audioUnlocked;
+                        vidEl.play().catch(()=>{});
                     }
                 } else if(state.media_type === 'image') {
-                    if(lastMediaType !== 'image') { stage.innerHTML = `<div class="image-card" id="main-image"></div>`; lastMediaType = 'image'; }
+                    if(lastMediaType !== 'image') {
+                        stage.innerHTML = `<div class="image-card"><img id="main-image" alt="BASHAN LINE"></div>`;
+                        lastMediaType = 'image';
+                        currentImageIndex = -1;
+                    }
                     if(imageList.length > 0) {
+                        // تبديل الصور كل 6 ثوانٍ وفق ساعة الخادم نفسها لدى جميع المشاهدين.
                         const idx = Math.floor(serverTime / 6) % imageList.length;
-                        document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
+                        const img = document.getElementById('main-image');
+                        if (img && idx !== currentImageIndex) {
+                            currentImageIndex = idx;
+                            img.classList.remove('slide-in');
+                            img.src = imageList[idx];
+                            // إعادة تشغيل حركة السلايد عند كل صورة جديدة.
+                            void img.offsetWidth;
+                            img.classList.add('slide-in');
+                        }
                     }
                 } else {
                     stage.innerHTML = ``;
