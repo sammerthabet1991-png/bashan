@@ -59,7 +59,7 @@ def init_dbs():
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'approved', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS news (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, category TEXT, source_name TEXT, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS sources (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT UNIQUE NOT NULL, category TEXT DEFAULT 'عالمي')''')
         default_sources = [
             ("BBC Arabic", "https://feeds.bbci.co.uk/arabic/rss.xml", "السويداء"),
@@ -105,6 +105,19 @@ def init_dbs():
 
 def fetch_portal_news():
     try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, url, category FROM sources")
+        for name, url, category in cursor.fetchall():
+            try:
+                feed = feedparser.parse(url)
+                for entry in feed.entries[:2]:
+                    cursor.execute("INSERT OR IGNORE INTO news (title, category, source_name, status) VALUES (?, ?, ?, 'pending')", (entry.title.strip(), category, name))
+            except Exception:
+                pass
+        conn.commit()
+        conn.close()
+
         conn_p = sqlite3.connect(DB_PORTAL)
         cursor_p = conn_p.cursor()
         cursor_p.execute("SELECT name, url, category FROM portal_sources")
@@ -165,7 +178,7 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث المباشر (مع قسم الموسيقى وإضافة أخبار الشريط) (/admin) ---
+# --- 3. لوحة تحكم البث المباشر (/admin) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -208,7 +221,19 @@ ADMIN_HTML = """
                         <option value="90" {% if sweida_speed == 90 %}selected{% endif %}>مريح (افتراضي)</option>
                         <option value="45" {% if sweida_speed == 45 %}selected{% endif %}>سريع</option>
                     </select><br>
-                    <button type="submit" class="btn" style="background:#7b1fa2; color:#fff; width:100%;">تعديل سرعة الشريط</button>
+                    <button type="submit" class="btn" style="background:#7b1fa2; color:#fff; width:100%;">تعديل سرعة الشريط العلوي</button>
+                </form>
+            </div>
+
+            <div class="card" style="border: 2px solid #d4af37;">
+                <h2 style="color: #d4af37;">⚡ سرعة شريط الأحداث العالمية</h2>
+                <form action="/set_world_speed" method="post">
+                    <select name="world_speed">
+                        <option value="120" {% if world_speed == 120 %}selected{% endif %}>بطيء</option>
+                        <option value="90" {% if world_speed == 90 %}selected{% endif %}>مريح (افتراضي)</option>
+                        <option value="45" {% if world_speed == 45 %}selected{% endif %}>سريع</option>
+                    </select><br>
+                    <button type="submit" class="btn btn-approve" style="width:100%;">تعديل سرعة الشريط السفلي</button>
                 </form>
             </div>
 
@@ -222,7 +247,6 @@ ADMIN_HTML = """
                 </form>
             </div>
 
-            <!-- قسم إدارة الموسيقى الذي طلبته عودته -->
             <div class="card" style="border: 2px solid #2e7d32;">
                 <h2 style="color: #4ade80;">🎵 إدارة وتشغيل الموسيقى (مع الصور)</h2>
                 <form action="/set_active_song" method="post">
@@ -261,14 +285,19 @@ ADMIN_HTML = """
             </div>
 
             <div class="card">
-                <h2>الأخبار الحالية في الشريط</h2>
+                <h2>أخبار البث الواردة وقيد المراجعة</h2>
                 <table>
-                    <tr><th>التصنيف</th><th>الخبر</th><th>إجراء</th></tr>
+                    <tr><th>التصنيف</th><th>الخبر</th><th>الحالة / إجراء</th></tr>
                     {% for item in news %}
                     <tr>
                         <td><span class="badge" style="background:#7b1fa2; color:#fff;">{{ item[2] }}</span></td>
                         <td>{{ item[1] }}</td>
-                        <td>
+                        <td style="white-space:nowrap;">
+                            {% if item[4] == 'pending' %}
+                            <a href="/approve/{{ item[0] }}"><button class="btn btn-approve">اعتماد</button></a>
+                            {% else %}
+                            <span style="color:#4ade80; font-weight:bold; font-size:12px;">معتمد ✓</span>
+                            {% endif %}
                             <a href="/reject/{{ item[0] }}"><button class="btn btn-reject">حذف</button></a>
                         </td>
                     </tr>
@@ -285,7 +314,7 @@ ADMIN_HTML = """
 def admin_panel(username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, category, source_name FROM news ORDER BY id DESC LIMIT 40")
+    cursor.execute("SELECT id, title, category, source_name, status FROM news ORDER BY id DESC LIMIT 40")
     news = cursor.fetchall()
     conn.close()
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
@@ -302,6 +331,15 @@ def add_ticker_news(title: str = Form(...), category: str = Form(...), username:
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO news (title, category, source_name, status) VALUES (?, ?, 'لوحة البث', 'approved')", (title, category))
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.get("/approve/{news_id}")
+def approve_news(news_id: int, username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE news SET status = 'approved' WHERE id = ?", (news_id,))
     conn.commit()
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
@@ -364,7 +402,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. واجهة البث المباشر مع دعم الصوت والصور ---
+# --- 4. واجهة البث المباشر الموحد (/ticker) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -426,7 +464,7 @@ TICKER_HTML = """
             } catch(e){}
         }
 
-        function setSongSource(targetUrl) {
+        function setSongSource(targetUrl, serverTime) {
             if (currentSongPath !== targetUrl) {
                 currentSongPath = targetUrl;
                 audioPlayer.src = targetUrl;
@@ -440,7 +478,7 @@ TICKER_HTML = """
         audioPlayer.addEventListener('ended', () => {
             if (songList.length > 0) {
                 currentSongIndex = (currentSongIndex + 1) % songList.length;
-                setSongSource(songList[currentSongIndex]);
+                setSongSource(songList[currentSongIndex], 0);
             }
         });
 
@@ -451,8 +489,8 @@ TICKER_HTML = """
                 
                 document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
                 document.getElementById('top-ticker-content').style.animationDelay = `-${serverTime % state.sweida_speed}s`;
-                document.getElementById('ticker-content').style.animation = `ticker 90s linear infinite`;
-                document.getElementById('ticker-content').style.animationDelay = `-${serverTime % 90}s`;
+                document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
+                document.getElementById('ticker-content').style.animationDelay = `-${serverTime % state.world_speed}s`;
                 
                 const banner = document.getElementById('breaking-banner');
                 if(state.breaking_banner) { document.getElementById('breaking-text').innerText = state.breaking_banner; banner.style.display = 'flex'; } else { banner.style.display = 'none'; }
@@ -461,6 +499,12 @@ TICKER_HTML = """
                 if(state.media_type === 'video') {
                     if(!document.getElementById('live-video')) {
                         stage.innerHTML = `<video id="live-video" class="video-card" src="${state.active_video}" autoplay loop playsinline></video>`;
+                    }
+                    const vidEl = document.getElementById('live-video');
+                    if (vidEl) {
+                        if (Math.abs(vidEl.currentTime - (serverTime % vidEl.duration || 0)) > 2) {
+                            vidEl.currentTime = serverTime % (vidEl.duration || 100);
+                        }
                     }
                     audioPlayer.pause();
                     currentSongPath = "";
@@ -473,9 +517,9 @@ TICKER_HTML = """
                         document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
                     }
                     if(state.active_song === "AUTO_PLAYLIST" && songList.length > 0) {
-                        setSongSource(songList[currentSongIndex]);
+                        setSongSource(songList[currentSongIndex], serverTime);
                     } else if(state.active_song) {
-                        setSongSource(state.active_song);
+                        setSongSource(state.active_song, serverTime);
                     } else {
                         audioPlayer.pause();
                         currentSongPath = "";
@@ -518,7 +562,7 @@ def get_ticker():
 def get_approved_news():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT title, category FROM news ORDER BY id DESC LIMIT 40")
+    cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 40")
     rows = cursor.fetchall()
     conn.close()
     return [{"title": r[0], "category": r[1]} for r in rows]
