@@ -402,7 +402,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. واجهة البث المباشر الموحد (/ticker) ---
+# --- 4. واجهة البث المباشر (تزامن تام بالثانية للصوت والفيديو والشرائط) (/ticker) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -441,10 +441,10 @@ TICKER_HTML = """
     <div class="breaking-banner" id="breaking-banner"><span>🔴 عاجل: </span><span id="breaking-text"></span></div>
     <div class="ticker-container">
         <div class="ticker-title">أخبار عالمية</div>
-        <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">جاري التحميل...</div></div>
+        <div class="ticker-wrap"><div class="ticker-move" id="ticker-content">Jجاري التحميل...</div></div>
     </div>
     <script>
-        let imageList = [], songList = [], currentSongPath = "", currentSongIndex = 0, isAudioUnlocked = false;
+        let imageList = [], songList = [], currentSongPath = "", isAudioUnlocked = false;
         const audioPlayer = document.getElementById('audio-player');
 
         function unlockAudio() {
@@ -464,29 +464,50 @@ TICKER_HTML = """
             } catch(e){}
         }
 
-        function setSongSource(targetUrl, serverTime) {
-            if (currentSongPath !== targetUrl) {
-                currentSongPath = targetUrl;
-                audioPlayer.src = targetUrl;
-                audioPlayer.currentTime = 0;
+        // دالة مزامنة الصوت بناءً على توقيت الخادم الموحد
+        function syncAudioSync(serverTime, activeSongSetting) {
+            if (songList.length === 0) return;
+            
+            let targetSongUrl = "";
+            let songOffset = 0;
+
+            if (activeSongSetting === "AUTO_PLAYLIST") {
+                // حساب الأغنية الحالية والوقت المنقضي بدقة بناءً على سرعة الخادم وتتابع الأغاني (افتراض 200 ثانية لكل أغنية كمتوسط)
+                const songDuration = 200;
+                let totalPlaylistDuration = songList.length * songDuration;
+                let playlistTime = serverTime % totalPlaylistDuration;
+                let songIndex = Math.floor(playlistTime / songDuration);
+                songOffset = playlistTime % songDuration;
+                targetSongUrl = songList[songIndex];
+            } else {
+                targetSongUrl = activeSongSetting;
+                // إذا كانت أغنية واحدة محددة، تتم مزامنة الوقت المنقضي عليها
+                songOffset = serverTime % (audioPlayer.duration || 200);
+            }
+
+            if (currentSongPath !== targetSongUrl) {
+                currentSongPath = targetSongUrl;
+                audioPlayer.src = targetSongUrl;
+                audioPlayer.currentTime = songOffset;
                 audioPlayer.play().then(() => { audioPlayer.muted = false; }).catch(() => {});
-            } else if (audioPlayer.paused && currentSongPath !== "") {
-                audioPlayer.play().catch(() => {});
+            } else {
+                // تصحيح فوري لأي فرق زمني أكبر من ثانية واحدة عن السيرفر
+                if (Math.abs(audioPlayer.currentTime - songOffset) > 1.2) {
+                    audioPlayer.currentTime = songOffset;
+                }
+                if (audioPlayer.paused) {
+                    audioPlayer.play().catch(() => {});
+                }
             }
         }
 
-        audioPlayer.addEventListener('ended', () => {
-            if (songList.length > 0) {
-                currentSongIndex = (currentSongIndex + 1) % songList.length;
-                setSongSource(songList[currentSongIndex], 0);
-            }
-        });
-
         async function checkLiveState() {
             try {
-                const state = await (await fetch('/api/live_state')).json();
+                const response = await fetch('/api/live_state');
+                const state = await response.json();
                 const serverTime = state.server_time || (Date.now() / 1000);
                 
+                // مزامنة حركة الشرائط تماماً
                 document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
                 document.getElementById('top-ticker-content').style.animationDelay = `-${serverTime % state.sweida_speed}s`;
                 document.getElementById('ticker-content').style.animation = `ticker ${state.world_speed}s linear infinite`;
@@ -497,13 +518,15 @@ TICKER_HTML = """
                 
                 const stage = document.getElementById('stage-container');
                 if(state.media_type === 'video') {
-                    if(!document.getElementById('live-video')) {
-                        stage.innerHTML = `<video id="live-video" class="video-card" src="${state.active_video}" autoplay loop playsinline></video>`;
+                    if(!document.getElementById('live-video') || document.getElementById('live-video').getAttribute('data-src') !== state.active_video) {
+                        stage.innerHTML = `<video id="live-video" class="video-card" data-src="${state.active_video}" src="${state.active_video}" autoplay loop playsinline></video>`;
                     }
                     const vidEl = document.getElementById('live-video');
-                    if (vidEl) {
-                        if (Math.abs(vidEl.currentTime - (serverTime % vidEl.duration || 0)) > 2) {
-                            vidEl.currentTime = serverTime % (vidEl.duration || 100);
+                    if (vidEl && vidEl.duration) {
+                        let targetVideoTime = serverTime % vidEl.duration;
+                        // مزامنة زمن الفيديو بالثانية تماماً مع كل المشاهدين
+                        if (Math.abs(vidEl.currentTime - targetVideoTime) > 1.0) {
+                            vidEl.currentTime = targetVideoTime;
                         }
                     }
                     audioPlayer.pause();
@@ -516,10 +539,9 @@ TICKER_HTML = """
                         const idx = Math.floor(serverTime / 6) % imageList.length;
                         document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
                     }
-                    if(state.active_song === "AUTO_PLAYLIST" && songList.length > 0) {
-                        setSongSource(songList[currentSongIndex], serverTime);
-                    } else if(state.active_song) {
-                        setSongSource(state.active_song, serverTime);
+                    
+                    if(state.active_song) {
+                        syncAudioSync(serverTime, state.active_song);
                     } else {
                         audioPlayer.pause();
                         currentSongPath = "";
@@ -547,7 +569,7 @@ TICKER_HTML = """
         }
 
         loadAssets(); checkLiveState(); updateTickers();
-        setInterval(checkLiveState, 1000);
+        setInterval(checkLiveState, 400); // تدقيق مستمر للمزامنة بالمللي ثانية
         setInterval(updateTickers, 10000);
     </script>
 </body>
@@ -728,7 +750,7 @@ PORTAL_MAIN_HTML = """
         <div class="nav-links">
             <a href="/news?lang=ar" class="{% if current_lang == 'ar' %}active{% endif %}">العربية</a>
             <a href="/news?lang=en" class="{% if current_lang == 'en' %}active{% endif %}">English</a>
-            <a href="/news?lang=he" class="{% if current_lang == 'he' %}active{% endif %}">עברית</a>
+            <a href="/news?lang=he" class="{% if current_lang == 'he' %}active{% endif %}">עבריت</a>
             <a href="/ticker" class="live-btn" target="_blank">🔴 البث المباشر</a>
         </div>
     </header>
