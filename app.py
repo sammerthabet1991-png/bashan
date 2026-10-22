@@ -348,7 +348,7 @@ def reject_news(news_id: int, username: str = Depends(verify_admin)):
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
-# --- 4. واجهة البث المباشر (إصلاح تكرار الصوت) ---
+# --- 4. واجهة البث المباشر المحدثة لحل الصوت تماماً ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -408,7 +408,7 @@ TICKER_HTML = """
         <div class="image-card" id="main-image"></div>
     </div>
 
-    <audio id="audio-player" style="display:none;"></audio>
+    <audio id="audio-player" preload="auto" style="display:none;"></audio>
 
     <div class="breaking-banner" id="breaking-banner">
         <span style="background:#000; color:#ffeb3b; padding:2px 8px; border-radius:4px; margin-left:12px; font-size:14px;">🔴 عاجل</span>
@@ -425,18 +425,19 @@ TICKER_HTML = """
         let songList = [];
         let currentMediaType = "";
         let currentVideoSrc = "";
+        let currentSongPath = "";
         let currentSongIndex = 0;
         let isAudioUnlocked = false;
-        let isSongPlaying = false;
+
+        const audioPlayer = document.getElementById('audio-player');
 
         function unlockAudio() {
             if (isAudioUnlocked) return;
             const vid = document.getElementById('live-video');
             if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
-            const aud = document.getElementById('audio-player');
-            if (aud) { 
-                aud.muted = false; 
-                if (aud.src) aud.play().catch(()=>{}); 
+            if (audioPlayer && audioPlayer.src) { 
+                audioPlayer.muted = false; 
+                audioPlayer.play().catch(()=>{}); 
             }
             
             isAudioUnlocked = true;
@@ -457,28 +458,26 @@ TICKER_HTML = """
             } catch (e) {}
         }
 
-        const audioPlayer = document.getElementById('audio-player');
-
-        // الانتقال التلقائي بين الأغاني عند نهايتها
-        audioPlayer.addEventListener('ended', () => {
-            isSongPlaying = false;
-            if (songList.length > 0) {
-                currentSongIndex = (currentSongIndex + 1) % songList.length;
-                playSong(songList[currentSongIndex]);
-            }
-        });
-
-        function playSong(url) {
-            if (audioPlayer.src !== window.location.origin + url && audioPlayer.src !== url) {
-                audioPlayer.src = url;
-                isSongPlaying = false;
-            }
-            if (!isSongPlaying) {
+        // تشغيل الموسيقى بشكل مستقل كلياً دون مقاطعة بالدائرة التكرارية
+        function setSongSource(targetUrl) {
+            if (currentSongPath !== targetUrl) {
+                currentSongPath = targetUrl;
+                audioPlayer.src = targetUrl;
+                audioPlayer.currentTime = 0;
                 audioPlayer.play().then(() => {
-                    isSongPlaying = true;
+                    audioPlayer.muted = false;
                 }).catch(() => {});
+            } else if (audioPlayer.paused && currentSongPath !== "") {
+                audioPlayer.play().catch(() => {});
             }
         }
+
+        audioPlayer.addEventListener('ended', () => {
+            if (songList.length > 0) {
+                currentSongIndex = (currentSongIndex + 1) % songList.length;
+                setSongSource(songList[currentSongIndex]);
+            }
+        });
 
         async function checkLiveState() {
             try {
@@ -513,7 +512,7 @@ TICKER_HTML = """
                         currentMediaType = 'video';
                         currentVideoSrc = state.active_video;
                         audioPlayer.pause();
-                        isSongPlaying = false;
+                        currentSongPath = "";
                         
                         stage.innerHTML = `<video id="live-video" class="video-card" src="${currentVideoSrc}" autoplay loop playsinline></video>`;
                     }
@@ -540,17 +539,14 @@ TICKER_HTML = """
                         }
                     }
 
-                    // تشغيل الموسيقى دون التسبب في تقطيع أو تكرار
+                    // التبديل الصريح دون أي مقاطعة
                     if (state.active_song === "AUTO_PLAYLIST" && songList.length > 0) {
-                        if (!isSongPlaying) {
-                            playSong(songList[currentSongIndex]);
-                        }
+                        setSongSource(songList[currentSongIndex]);
                     } else if (state.active_song && state.active_song !== "AUTO_PLAYLIST") {
-                        playSong(state.active_song);
+                        setSongSource(state.active_song);
                     } else if (!state.active_song) {
                         audioPlayer.pause();
-                        audioPlayer.src = "";
-                        isSongPlaying = false;
+                        currentSongPath = "";
                     }
                 }
 
