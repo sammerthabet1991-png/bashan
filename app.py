@@ -37,7 +37,8 @@ CURRENT_STATE = {
     "sweida_speed": 90,
     "world_speed": 90,
     "playlist": [],
-    "playlist_started_at": 0
+    "playlist_started_at": 0,
+    "video_playlist_started_at": 0
 }
 
 # --- 2. إعدادات الحماية ---
@@ -583,6 +584,7 @@ def switch_to_images(username: str = Depends(verify_admin)):
 @app.get("/switch_to_video")
 def switch_to_video(username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
+    CURRENT_STATE["video_playlist_started_at"] = time.time()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.get("/admin/clear_stage")
@@ -600,12 +602,14 @@ def set_youtube_video(youtube_url: str = Form(...), username: str = Depends(veri
 def set_active_video(video_name: str = Form(...), username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
     CURRENT_STATE["active_video"] = f"/videos/{video_name}"
+    CURRENT_STATE["video_playlist_started_at"] = time.time()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.get("/set_active_video_direct")
 def set_active_video_direct(v: str, username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "video"
     CURRENT_STATE["active_video"] = v
+    CURRENT_STATE["video_playlist_started_at"] = time.time()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_active_song")
@@ -1141,45 +1145,44 @@ TICKER_HTML = """
                     currentSongPath = "";
                 } 
                 else if(state.media_type === 'video') {
-                    if (state.active_video) {
-                        const targetVid = state.active_video;
+                    if (state.active_video && videoList.length) {
+                        // كل المشاهدين يحسبون الفيديو وموضعه من ساعة السيرفر نفسها.
+                        // لذلك دخول مشاهد جديد أو اختلاف توقيت انتهاء الفيديو محلياً لا يغيّر ترتيب البث.
+                        const startUrl = videoList.includes(state.active_video) ? state.active_video : videoList[0];
+                        const startIndex = Math.max(0, videoList.indexOf(startUrl));
+                        const orderedVideos = videoList.slice(startIndex).concat(videoList.slice(0, startIndex));
+                        const durationItems = orderedVideos.map(url => ({kind: 'video', url}));
+                        await getPlaylistDurations(durationItems);
+                        const durations = orderedVideos.map(url => Math.max(1, playlistDurations[url] || 180));
+                        const totalDuration = durations.reduce((a, b) => a + b, 0);
+                        const elapsed = Math.max(0, serverTime - (state.video_playlist_started_at || serverTime));
+                        let position = elapsed % totalDuration;
+                        let idx = 0;
+                        while (idx < durations.length - 1 && position >= durations[idx]) {
+                            position -= durations[idx];
+                            idx++;
+                        }
+                        const targetVid = orderedVideos[idx];
                         let vidEl = document.getElementById('live-video');
-
-                        // إذا بدأنا التنقل التلقائي بين ملفات مجلد videos، لا نرجع للفيديو الأول
-                        // في كل استعلام حالة؛ نستمر حتى يغيّر الأدمن وضع البث أو يختار فيديو آخر.
-                        if (folderVideoPlaylistActive && folderVideoBaseUrl === targetVid && vidEl) {
-                            if (vidEl.paused) vidEl.play().catch(() => { vidEl.muted = true; vidEl.play().catch(()=>{}); });
-                        } else {
-                            folderVideoPlaylistActive = false;
-                            folderVideoBaseUrl = targetVid;
-                            if (!vidEl || lastMediaType !== 'video' || activeVideoUrl !== targetVid) {
-                                stage.innerHTML = `<video id="live-video" class="video-card" src="${targetVid}" autoplay playsinline preload="auto"></video>`;
-                                lastMediaType = 'video';
-                                activeVideoUrl = targetVid;
-                                vidEl = document.getElementById('live-video');
-                            }
-                            if (vidEl) {
-                                vidEl.loop = videoList.length === 1;
-                                vidEl.onended = () => {
-                                    // تشغيل ملفات مجلد الفيديو بالتتابع وإعادة القائمة من البداية إلى ما لا نهاية.
-                                    if (videoList.length < 2) return;
-                                    const currentUrl = activeVideoUrl || targetVid;
-                                    let currentIndex = videoList.indexOf(currentUrl);
-                                    if (currentIndex < 0) currentIndex = videoList.indexOf(targetVid);
-                                    const nextUrl = videoList[(currentIndex + 1 + videoList.length) % videoList.length];
-                                    if (!nextUrl) return;
-                                    folderVideoPlaylistActive = true;
-                                    folderVideoBaseUrl = targetVid;
-                                    activeVideoUrl = nextUrl;
-                                    vidEl.src = nextUrl;
-                                    vidEl.load();
-                                    vidEl.play().catch(() => { vidEl.muted = true; vidEl.play().catch(()=>{}); });
-                                };
-                                // لا نعيد ضبط موضع الفيديو كل 400ms؛ ذلك قد يمنع الحدث ended من الحدوث.
-                                if (vidEl.paused) {
-                                    vidEl.muted = false;
-                                    vidEl.play().catch(() => { vidEl.muted = true; vidEl.play().catch(()=>{}); });
+                        if (!vidEl || lastMediaType !== 'video' || activeVideoUrl !== targetVid) {
+                            stage.innerHTML = `<video id="live-video" class="video-card" src="${targetVid}" autoplay playsinline preload="auto"></video>`;
+                            lastMediaType = 'video';
+                            activeVideoUrl = targetVid;
+                            folderVideoPlaylistActive = true;
+                            folderVideoBaseUrl = startUrl;
+                            vidEl = document.getElementById('live-video');
+                            vidEl.addEventListener('loadedmetadata', () => {
+                                try { vidEl.currentTime = Math.min(position, Math.max(0, (vidEl.duration || durations[idx]) - 0.25)); } catch(e) {}
+                                vidEl.play().catch(() => { vidEl.muted = true; vidEl.play().catch(()=>{}); });
+                            }, {once: true});
+                        }
+                        if (vidEl) {
+                            vidEl.loop = false;
+                            if (vidEl.readyState >= 1) {
+                                if (Math.abs((vidEl.currentTime || 0) - position) > 3) {
+                                    try { vidEl.currentTime = Math.min(position, Math.max(0, (vidEl.duration || durations[idx]) - 0.25)); } catch(e) {}
                                 }
+                                if (vidEl.paused) vidEl.play().catch(() => { vidEl.muted = true; vidEl.play().catch(()=>{}); });
                             }
                         }
                     }
@@ -1248,12 +1251,40 @@ def get_ticker():
 
 @app.get("/api/approved_news")
 def get_approved_news():
+    """Return approved ticker items from both the broadcast news DB and the portal DB."""
+    items = []
+
+    # Short ticker news entered/fetched through the broadcast admin panel.
     conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT title, category FROM news WHERE status = 'approved' ORDER BY id DESC LIMIT 50")
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"title": r[0], "category": r[1]} for r in rows]
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT title, category FROM news WHERE lower(trim(status)) = 'approved' ORDER BY id DESC LIMIT 50")
+        for title, category in cursor.fetchall():
+            if title and str(title).strip():
+                items.append({"title": str(title).strip(), "category": str(category or "عالمي").strip()})
+    finally:
+        conn.close()
+
+    # Also include articles approved in the multilingual news portal, which uses a separate database.
+    conn = sqlite3.connect(DB_PORTAL)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT title_ar, category FROM articles WHERE lower(trim(status)) = 'approved' ORDER BY id DESC LIMIT 50")
+        for title, category in cursor.fetchall():
+            if title and str(title).strip():
+                items.append({"title": str(title).strip(), "category": str(category or "عالمي").strip()})
+    finally:
+        conn.close()
+
+    # De-duplicate identical headlines across the two databases while preserving newest-first order.
+    unique_items = []
+    seen = set()
+    for item in items:
+        key = item["title"].casefold()
+        if key not in seen:
+            seen.add(key)
+            unique_items.append(item)
+    return unique_items[:80]
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
