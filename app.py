@@ -38,7 +38,8 @@ CURRENT_STATE = {
     "world_speed": 90,
     "playlist": [],
     "playlist_started_at": 0,
-    "video_playlist_started_at": 0
+    "video_playlist_started_at": 0,
+    "playback_started_at": 0
 }
 
 # --- 2. إعدادات الحماية ---
@@ -172,7 +173,7 @@ def get_images():
 @app.get("/api/get_songs")
 def get_songs():
     if os.path.exists(UPLOAD_DIR):
-        return [f"/music/{f}" for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))]
+        return sorted([f"/music/{f}" for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))], key=str.lower)
     return []
 
 @app.get("/api/get_videos")
@@ -511,6 +512,7 @@ def clear_stage(username: str = Depends(verify_admin)):
 def set_youtube_video(youtube_url: str = Form(...), username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "youtube"
     CURRENT_STATE["youtube_url"] = youtube_url.strip()
+    CURRENT_STATE["video_playlist_started_at"] = time.time()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_active_video")
@@ -531,6 +533,7 @@ def set_active_video_direct(v: str, username: str = Depends(verify_admin)):
 def set_active_song(song_name: str = Form(None), username: str = Depends(verify_admin)):
     CURRENT_STATE["media_type"] = "image"
     CURRENT_STATE["active_song"] = "AUTO_PLAYLIST" if song_name == "AUTO_PLAYLIST" else (f"/music/{song_name}" if song_name else "")
+    CURRENT_STATE["playlist_started_at"] = time.time()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_sweida_speed")
@@ -773,12 +776,15 @@ TICKER_HTML = """
     </div>
     <script>
         let imageList = [], songList = [], videoList = [], currentSongPath = "", lastMediaType = "", lastYoutubeUrl = "", activeVideoUrl = "";
+        let songDurations = [], songDurationsReady = false, audioUnlocked = false;
         const audioPlayer = document.getElementById('audio-player');
 
         function enableAudioAndPlay() {
             document.getElementById('touch-overlay').style.display = 'none';
             const vid = document.getElementById('live-video');
+            audioUnlocked = true;
             if (vid) { vid.muted = false; vid.play().catch(()=>{}); }
+            if (audioPlayer.src) audioPlayer.play().catch(()=>{});
         }
 
         async function loadAssets() {
@@ -786,16 +792,28 @@ TICKER_HTML = """
                 imageList = await (await fetch('/api/get_images')).json();
                 songList = await (await fetch('/api/get_songs')).json();
                 videoList = await (await fetch('/api/get_videos')).json();
+                songDurations = await Promise.all(songList.map(src => new Promise(resolve => {
+                    const probe = new Audio();
+                    let settled = false;
+                    const finish = value => { if (!settled) { settled = true; resolve(value); } };
+                    probe.preload = 'metadata';
+                    probe.onloadedmetadata = () => finish(Number.isFinite(probe.duration) ? probe.duration : 0);
+                    probe.onerror = () => finish(0);
+                    probe.src = src;
+                    probe.load();
+                    setTimeout(() => finish(0), 5000);
+                })));
+                songDurationsReady = true;
             } catch(e){}
         }
 
-        function getYoutubeEmbedUrl(url) {
+        function getYoutubeEmbedUrl(url, startSeconds = 0) {
             let videoId = "";
             if (url.includes('youtu.be/')) { videoId = url.split('youtu.be/')[1]?.split('?')[0]; }
             else if (url.includes('youtube.com/watch')) { videoId = new URLSearchParams(url.split('?')[1]).get('v'); }
             else { videoId = url.trim(); }
             if (!videoId) return "";
-            return `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`;
+            return `https://www.youtube.com/embed/${videoId}?autoplay=1&start=${Math.max(0, Math.floor(startSeconds))}&mute=0&controls=0&disablekb=1&fs=0&iv_load_policy=3&playsinline=1`;
         }
 
         async function checkLiveState() {
@@ -803,6 +821,53 @@ TICKER_HTML = """
                 const response = await fetch('/api/live_state');
                 const state = await response.json();
                 const serverTime = state.server_time || (Date.now() / 1000);
+
+                // مزامنة الفيديو المحلي على ساعة الخادم لدى جميع المشاهدين.
+                if (state.media_type === 'video') {
+                    const v = document.getElementById('live-video');
+                    if (v && v.readyState >= 1 && Number.isFinite(v.duration) && v.duration > 0) {
+                        const elapsed = Math.max(0, serverTime - (state.video_playlist_started_at || serverTime));
+                        const target = elapsed % v.duration;
+                        if (Math.abs(v.currentTime - target) > 1.25) {
+                            try { v.currentTime = target; } catch(e) {}
+                        }
+                        v.muted = !audioUnlocked;
+                        v.play().catch(()=>{});
+                    }
+                }
+
+                // مزامنة الموسيقى المنفصلة مع خط زمني موحد لجميع المشاهدين.
+                if (state.active_song) {
+                    let targetSrc = state.active_song;
+                    let targetTime = Math.max(0, serverTime - (state.playlist_started_at || serverTime));
+                    if (state.active_song === 'AUTO_PLAYLIST' && songDurationsReady && songList.length) {
+                        const valid = songDurations.map((d, i) => ({d, i})).filter(x => x.d > 0);
+                        const total = valid.reduce((sum, x) => sum + x.d, 0);
+                        if (total > 0) {
+                            let pos = targetTime % total;
+                            let chosen = valid[0];
+                            for (const item of valid) {
+                                if (pos < item.d) { chosen = item; break; }
+                                pos -= item.d;
+                            }
+                            targetSrc = songList[chosen.i];
+                            targetTime = pos;
+                        } else targetSrc = '';
+                    }
+                    if (targetSrc && audioPlayer.getAttribute('src') !== targetSrc) {
+                        audioPlayer.src = targetSrc;
+                        audioPlayer.load();
+                    }
+                    if (targetSrc && audioPlayer.readyState >= 1 && Number.isFinite(audioPlayer.duration) && audioPlayer.duration > 0) {
+                        const desired = targetTime % audioPlayer.duration;
+                        if (Math.abs(audioPlayer.currentTime - desired) > 1.5) {
+                            try { audioPlayer.currentTime = desired; } catch(e) {}
+                        }
+                        if (audioUnlocked) audioPlayer.play().catch(()=>{});
+                    }
+                } else if (!audioPlayer.paused) {
+                    audioPlayer.pause();
+                }
                 
                 document.getElementById('top-ticker-content').style.animation = `ticker ${state.sweida_speed}s linear infinite`;
                 document.getElementById('top-ticker-content').style.animationDelay = `-${serverTime % state.sweida_speed}s`;
@@ -814,7 +879,8 @@ TICKER_HTML = """
                 
                 const stage = document.getElementById('stage-container');
                 if(state.media_type === 'youtube' && state.youtube_url) {
-                    let embedUrl = getYoutubeEmbedUrl(state.youtube_url);
+                    let embedElapsed = Math.max(0, serverTime - (state.video_playlist_started_at || serverTime));
+                    let embedUrl = getYoutubeEmbedUrl(state.youtube_url, embedElapsed);
                     if(embedUrl && (lastMediaType !== 'youtube' || lastYoutubeUrl !== state.youtube_url)) {
                         stage.innerHTML = `<iframe id="youtube-frame" class="youtube-card" src="${embedUrl}" frameborder="0" allow="autoplay"></iframe>`;
                         lastMediaType = 'youtube'; lastYoutubeUrl = state.youtube_url;
