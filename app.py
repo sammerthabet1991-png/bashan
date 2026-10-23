@@ -23,13 +23,13 @@ for directory in [UPLOAD_DIR, IMAGES_DIR, VIDEOS_DIR]:
 
 default_vid_file = ""
 if os.path.exists(VIDEOS_DIR):
-    vids = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))]
+    vids = sorted([f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))], key=str.lower)
     if vids:
         default_vid_file = f"/videos/{vids[0]}"
 
 default_song_file = ""
 if os.path.exists(UPLOAD_DIR):
-    songs = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))]
+    songs = sorted([f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))], key=str.lower)
     if songs:
         default_song_file = f"/music/{songs[0]}"
 
@@ -37,6 +37,7 @@ CURRENT_STATE = {
     "media_type": "image",
     "active_song": default_song_file,
     "active_video": default_vid_file,
+    "active_standby": "",
     "youtube_url": "https://www.youtube.com/watch?v=5qap5aO4i9A",
     "breaking_list": ["شبكة باشان الإعلامية - بث مباشر متزامن على مدار الساعة"],
     "sweida_speed": 90,
@@ -44,7 +45,9 @@ CURRENT_STATE = {
     "playlist": [],
     "playlist_started_at": time.time(),
     "video_playlist_started_at": time.time(),
-    "song_playlist_started_at": time.time()
+    "song_playlist_started_at": time.time(),
+    "last_video_switch": 0,
+    "last_song_switch": 0
 }
 
 security = HTTPBasic()
@@ -165,6 +168,40 @@ def get_live_state():
     state["server_time"] = time.time()
     return state
 
+@app.post("/api/next_video")
+def next_video():
+    now = time.time()
+    if now - CURRENT_STATE.get("last_video_switch", 0) > 5:
+        vids = sorted([f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))], key=str.lower)
+        if vids and CURRENT_STATE["active_video"]:
+            current_file = CURRENT_STATE["active_video"].split("/")[-1]
+            try:
+                idx = vids.index(current_file)
+                next_vid = vids[(idx + 1) % len(vids)]
+            except ValueError:
+                next_vid = vids[0]
+            CURRENT_STATE["active_video"] = f"/videos/{next_vid}"
+            CURRENT_STATE["video_playlist_started_at"] = now
+            CURRENT_STATE["last_video_switch"] = now
+    return {"status": "ok"}
+
+@app.post("/api/next_song")
+def next_song():
+    now = time.time()
+    if now - CURRENT_STATE.get("last_song_switch", 0) > 5:
+        songs = sorted([f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))], key=str.lower)
+        if songs and CURRENT_STATE["active_song"]:
+            current_file = CURRENT_STATE["active_song"].split("/")[-1]
+            try:
+                idx = songs.index(current_file)
+                next_song_file = songs[(idx + 1) % len(songs)]
+            except ValueError:
+                next_song_file = songs[0]
+            CURRENT_STATE["active_song"] = f"/music/{next_song_file}"
+            CURRENT_STATE["song_playlist_started_at"] = now
+            CURRENT_STATE["last_song_switch"] = now
+    return {"status": "ok"}
+
 
 # --- لوحة التحكم الشاملة ---
 ADMIN_HTML = """
@@ -221,6 +258,16 @@ ADMIN_HTML = """
                 <a href="/switch_to_images"><button class="btn" style="background:#3b82f6; color:#fff; width:31%; padding:10px;">عرض الصور 🖼️</button></a>
                 <a href="/switch_to_video"><button class="btn" style="background:#22c55e; color:#fff; width:31%; padding:10px;">الفيديو المحلي 🎬</button></a>
                 <a href="/admin/clear_stage"><button class="btn" style="background:#c62828; color:#fff; width:30%; padding:10px;">إيقاف الكل ❌</button></a>
+            </div>
+
+            <div class="card" style="border: 2px solid #f59e0b;">
+                <h2 style="color: #fbbf24;">⏸️ وضع الاستراحة / الصيانة</h2>
+                <form action="/set_standby_image" method="post">
+                    <select name="image_name" required>
+                        {% for img in image_files %}<option value="{{ img }}">{{ img }}</option>{% endfor %}
+                    </select><br>
+                    <button type="submit" class="btn" style="background:#f59e0b; color:#fff; width:100%;">تفعيل وضع الاستراحة 🛑</button>
+                </form>
             </div>
 
             <div class="card" style="border: 2px solid #ff0000;">
@@ -310,13 +357,22 @@ def admin_panel(username: str = Depends(verify_admin)):
     cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name IS NOT NULL AND source_name <> 'لوحة البث' ORDER BY id DESC LIMIT 100")
     world_news = cursor.fetchall()
     conn.close()
+    
     video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
+    image_files = [f for f in os.listdir(IMAGES_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))] if os.path.exists(IMAGES_DIR) else []
+    
     return Template(ADMIN_HTML).render(
-        sweida_news=sweida_news, world_news=world_news, video_files=video_files, music_files=music_files,
+        sweida_news=sweida_news, world_news=world_news, video_files=video_files, music_files=music_files, image_files=image_files,
         world_speed=CURRENT_STATE["world_speed"],
         current_youtube=CURRENT_STATE["youtube_url"]
     )
+
+@app.post("/set_standby_image")
+def set_standby_image(image_name: str = Form(...), username: str = Depends(verify_admin)):
+    CURRENT_STATE["media_type"] = "standby"
+    CURRENT_STATE["active_standby"] = f"/images/{image_name}"
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 @app.post("/set_world_speed")
 def set_world_speed(world_speed: int = Form(...), username: str = Depends(verify_admin)):
@@ -433,8 +489,13 @@ TICKER_HTML = """
         .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 45px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; }
         .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 14px; white-space: nowrap; }
 
-        .center-stage { position: absolute; top: 45px; left: 0; width: 100%; height: calc(100% - 95px); display: flex; justify-content: center; align-items: center; z-index: 10; background: #000; }
-        .youtube-card, .video-card, .image-card { width: 100%; height: 100%; border: none; object-fit: contain; background: #000; }
+        .center-stage { position: absolute; top: 45px; left: 0; width: 100%; height: calc(100% - 95px); display: flex; justify-content: center; align-items: center; z-index: 10; background: #000; overflow: hidden; }
+        .youtube-card, .video-card { width: 100%; height: 100%; border: none; object-fit: contain; background: #000; }
+
+        /* تأثيرات عرض الصور الاحترافية (Ken Burns + Crossfade) */
+        .kb-container { position: absolute; width: 100%; height: 100%; overflow: hidden; background: #000; }
+        .kb-slide { position: absolute; width: 100%; height: 100%; background-size: contain; background-repeat: no-repeat; background-position: center; opacity: 0; transform: scale(1); transition: opacity 1.5s ease-in-out, transform 8s linear; }
+        .kb-slide.active { opacity: 1; transform: scale(1.05); }
 
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 15px; white-space: nowrap; }
@@ -445,7 +506,6 @@ TICKER_HTML = """
     </style>
 </head>
 <body>
-    <!-- زر تفعيل الصوت الصغير للمتصفحات غير المدعومة، يختفي عند الضغط -->
     <button id="unmute-btn" onclick="unmuteAll()" style="position: absolute; top: 100px; right: 20px; z-index: 9999; background: #b91c1c; color: #fff; border: 2px solid #fff; padding: 10px 20px; font-size: 14px; font-weight: bold; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
         🔊 تفعيل الصوت
     </button>
@@ -474,6 +534,11 @@ TICKER_HTML = """
     <script>
         let imageList = [], lastMediaType = "", lastYoutubeUrl = "", activeVideoUrl = "", activeSongUrl = "";
         let userInteracted = false;
+        
+        // متغيرات للصور الاحترافية
+        window.lastImageIdx = -1;
+        window.activeSlide = 1;
+        window.lastStandby = "";
 
         function unmuteAll() {
             userInteracted = true;
@@ -534,15 +599,20 @@ TICKER_HTML = """
                         stage.innerHTML = `<iframe class="youtube-card" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
                         lastMediaType = 'youtube'; lastYoutubeUrl = state.youtube_url;
                     }
+
                 } else if(state.media_type === 'video' && state.active_video) {
                     if (!audio.paused) audio.pause();
                     let vidEl = document.getElementById('synced-video');
                     let targetTime = serverTime - (state.video_playlist_started_at || serverTime);
+                    
                     if (!vidEl || lastMediaType !== 'video' || activeVideoUrl !== state.active_video) {
                         stage.innerHTML = `<video id="synced-video" class="video-card" src="${state.active_video}" autoplay playsinline muted></video>`;
                         lastMediaType = 'video'; activeVideoUrl = state.active_video;
                         vidEl = document.getElementById('synced-video');
                         vidEl.muted = !userInteracted; 
+                        
+                        // الانتقال التلقائي للفيديو التالي عند الانتهاء
+                        vidEl.onended = () => { fetch('/api/next_video', {method: 'POST'}); };
                         vidEl.play().catch(e=>{});
                     }
                     if (vidEl) {
@@ -551,12 +621,16 @@ TICKER_HTML = """
                         if (Math.abs(vidEl.currentTime - targetTime) > 1.5) { vidEl.currentTime = targetTime; }
                         if (vidEl.paused) { vidEl.play().catch(e=>{}); }
                     }
+
                 } else if(state.media_type === 'image') {
                     if (state.active_song) {
                         if (activeSongUrl !== state.active_song) {
                             audio.src = state.active_song;
                             activeSongUrl = state.active_song;
                             audio.muted = !userInteracted;
+                            
+                            // الانتقال التلقائي للموسيقى التالية عند الانتهاء
+                            audio.onended = () => { fetch('/api/next_song', {method: 'POST'}); };
                             audio.play().catch(e => {});
                         }
                         audio.muted = !userInteracted;
@@ -566,14 +640,45 @@ TICKER_HTML = """
                         if (audio.paused) { audio.play().catch(e => {}); }
                     }
                     
+                    // عرض الصور الاحترافي
                     if(lastMediaType !== 'image') { 
-                        stage.innerHTML = `<div class="image-card" id="main-image" style="background-size:contain; background-repeat:no-repeat; background-position:center;"></div>`; 
+                        stage.innerHTML = `<div class="kb-container">
+                            <div class="kb-slide" id="slide1"></div>
+                            <div class="kb-slide" id="slide2"></div>
+                        </div>`; 
                         lastMediaType = 'image'; 
                     }
                     if(imageList.length > 0) {
                         const playlistElapsed = serverTime - (state.playlist_started_at || serverTime);
-                        const idx = Math.floor(playlistElapsed / 6) % imageList.length;
-                        document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
+                        const idx = Math.floor(playlistElapsed / 8) % imageList.length; // كل 8 ثواني تتبدل الصورة
+                        
+                        if (window.lastImageIdx !== idx) {
+                            window.lastImageIdx = idx;
+                            const s1 = document.getElementById('slide1');
+                            const s2 = document.getElementById('slide2');
+                            if (window.activeSlide === 1) {
+                                s2.style.backgroundImage = `url('${imageList[idx]}')`;
+                                s2.classList.add('active');
+                                s1.classList.remove('active');
+                                window.activeSlide = 2;
+                            } else {
+                                s1.style.backgroundImage = `url('${imageList[idx]}')`;
+                                s1.classList.add('active');
+                                s2.classList.remove('active');
+                                window.activeSlide = 1;
+                            }
+                        }
+                    }
+
+                } else if (state.media_type === 'standby') {
+                    // وضع الاستراحة / الصيانة الثابت
+                    if (!audio.paused) audio.pause();
+                    if(lastMediaType !== 'standby' || window.lastStandby !== state.active_standby) { 
+                        stage.innerHTML = `<div style="width:100%; height:100%; background:#000; display:flex; justify-content:center; align-items:center;">
+                            <img src="${state.active_standby}" style="max-width:100%; max-height:100%; object-fit:contain;">
+                        </div>`; 
+                        lastMediaType = 'standby'; 
+                        window.lastStandby = state.active_standby;
                     }
                 } else {
                     stage.innerHTML = ``;
@@ -622,7 +727,7 @@ def get_approved_news():
     return {"top": top_items, "bottom": bottom_items}
 
 
-# --- الموقع الإخباري الاحترافي ولوحة إدارته (لم يتم المساس بها نهائياً) ---
+# --- الموقع الإخباري الاحترافي ولوحة إدارته ---
 PORTAL_HOME_HTML = """
 <!DOCTYPE html>
 <html dir="{{ 'rtl' if lang != 'en' else 'ltr' }}" lang="{{ lang }}">
