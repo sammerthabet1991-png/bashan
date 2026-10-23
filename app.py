@@ -155,7 +155,7 @@ def get_live_state():
     return state
 
 
-# --- 3. لوحة تحكم البث الرئيسي (الكاملة) ---
+# --- 3. لوحة تحكم البث الرئيسية (الكاملة جداً) ---
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -363,7 +363,7 @@ def set_active_video(video_name: str = Form(...), username: str = Depends(verify
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- 4. صفحة البث المباشر مع ميزة المزامنة بالثانية بين جميع المستخدمين ---
+# --- 4. صفحة البث المباشر (الشريط المتزامن ومشغل يوتيوب للموبايل) ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -518,8 +518,8 @@ PORTAL_HOME_HTML = """
         <div>🌍 شبكة باشان الإخبارية الشاملة</div>
         <div>
             <a href="/news/fetch_rss">🔄 تحديث الأخبار</a>
-            <a href="/news/admin">⚙️ لوحة الإدارة</a>
-            <a href="/admin">📺 لوحة البث المباشر</a>
+            <a href="/news/admin">⚙️ لوحة إخبار الموقع</a>
+            <a href="/admin">📺 لوحة البث المباشر (الرئيسية)</a>
         </div>
     </div>
     <header>
@@ -576,7 +576,7 @@ PORTAL_ADMIN_HTML = """
         <h1>⚙️ لوحة إدارة موقع باشان الإخباري</h1>
         <div style="margin-bottom: 20px;">
             <a href="/news/fetch_rss" style="background: #2563eb; color: #fff; padding: 10px 20px; border-radius: 5px; text-decoration: none; font-weight: bold; display: inline-block;">سحب الأخبار من الوكالات العالمية الآن 🔄</a>
-            <a href="/admin" style="background: #059669; color: #fff; padding: 10px 20px; border-radius: 5px; text-decoration: none; font-weight: bold; display: inline-block; margin-right: 10px;">📺 لوحة البث المباشر والشريط</a>
+            <a href="/admin" style="background: #059669; color: #fff; padding: 10px 20px; border-radius: 5px; text-decoration: none; font-weight: bold; display: inline-block; margin-right: 10px;">📺 لوحة تحكم البث والشريط (الرئيسية)</a>
         </div>
         <form action="/news/admin/add" method="post">
             <label>عنوان المقال:</label>
