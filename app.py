@@ -27,18 +27,24 @@ if os.path.exists(VIDEOS_DIR):
     if vids:
         default_vid_file = f"/videos/{vids[0]}"
 
+default_song_file = ""
+if os.path.exists(UPLOAD_DIR):
+    songs = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))]
+    if songs:
+        default_song_file = f"/music/{songs[0]}"
+
 CURRENT_STATE = {
-    "media_type": "youtube",
-    "active_song": "",
+    "media_type": "image",
+    "active_song": default_song_file,
     "active_video": default_vid_file,
     "youtube_url": "https://www.youtube.com/watch?v=5qap5aO4i9A",
     "breaking_list": ["شبكة باشان الإعلامية - بث مباشر متزامن على مدار الساعة"],
     "sweida_speed": 90,
     "world_speed": 120,
     "playlist": [],
-    "playlist_started_at": 0,
-    "video_playlist_started_at": 0,
-    "song_playlist_started_at": 0
+    "playlist_started_at": time.time(),
+    "video_playlist_started_at": time.time(),
+    "song_playlist_started_at": time.time()
 }
 
 security = HTTPBasic()
@@ -195,6 +201,9 @@ ADMIN_HTML = """
             <input type="text" name="breaking_text" placeholder="اكتب نص العاجل..." required style="margin-bottom:0;">
             <button type="submit" class="btn btn-approve" style="white-space: nowrap;">إضافة عاجل 🚀</button>
         </form>
+        <form action="/admin/clear_breaking" method="post" style="margin-top:10px;">
+            <button type="submit" class="btn btn-reject">مسح كافة العواجل 🗑️</button>
+        </form>
     </div>
 
     <div class="card" style="border: 2px solid #0284c7;">
@@ -233,7 +242,7 @@ ADMIN_HTML = """
             </div>
 
             <div class="card" style="border: 2px solid #a855f7;">
-                <h2 style="color: #c084fc;">🎵 تشغيل مقطع صوتي / موسيقى محددة</h2>
+                <h2 style="color: #c084fc;">🎵 تشغيل مقطع صوتي / موسيقى متزامنة</h2>
                 <form action="/set_active_song" method="post">
                     <select name="song_name" required>
                         {% for song in music_files %}<option value="{{ song }}">{{ song }}</option>{% endfor %}
@@ -269,6 +278,23 @@ ADMIN_HTML = """
                     {% endfor %}
                 </table>
             </div>
+
+            <div class="card" style="border: 2px solid #d4af37;">
+                <h2 style="color: #d4af37;">⚡ مراجعة أخبار المواقع للشريط السفلي فقط</h2>
+                <table>
+                    <tr><th>الخبر</th><th>الحالة</th><th>الإجراءات</th></tr>
+                    {% for item in world_news %}
+                    <tr>
+                        <td>{{ item[1] }}</td>
+                        <td>{% if item[4] == 'approved' %}<span style="color:#4ade80;">معتمد</span>{% else %}<span style="color:#f59e0b;">معلق</span>{% endif %}</td>
+                        <td style="white-space:nowrap;">
+                            {% if item[4] == 'pending' %}<a href="/approve/{{ item[0] }}"><button class="btn btn-approve" style="padding:3px 6px;">اعتماد</button></a>{% endif %}
+                            <a href="/reject/{{ item[0] }}"><button class="btn btn-reject" style="padding:3px 6px;">حذف</button></a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
         </div>
     </div>
 </body>
@@ -281,11 +307,13 @@ def admin_panel(username: str = Depends(verify_admin)):
     cursor = conn.cursor()
     cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name = 'لوحة البث' ORDER BY id DESC LIMIT 50")
     sweida_news = cursor.fetchall()
+    cursor.execute("SELECT id, title, category, source_name, status FROM news WHERE source_name IS NOT NULL AND source_name <> 'لوحة البث' ORDER BY id DESC LIMIT 100")
+    world_news = cursor.fetchall()
     conn.close()
     video_files = [f for f in os.listdir(VIDEOS_DIR) if f.lower().endswith(('.mp4', '.webm'))] if os.path.exists(VIDEOS_DIR) else []
     music_files = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a'))] if os.path.exists(UPLOAD_DIR) else []
     return Template(ADMIN_HTML).render(
-        sweida_news=sweida_news, video_files=video_files, music_files=music_files,
+        sweida_news=sweida_news, world_news=world_news, video_files=video_files, music_files=music_files,
         world_speed=CURRENT_STATE["world_speed"],
         current_youtube=CURRENT_STATE["youtube_url"]
     )
@@ -299,6 +327,11 @@ def set_world_speed(world_speed: int = Form(...), username: str = Depends(verify
 def add_breaking(breaking_text: str = Form(...), username: str = Depends(verify_admin)):
     CURRENT_STATE["breaking_list"].append(breaking_text.strip())
     return HTMLResponse("<script>alert('تمت إضافة العاجل بنجاح!'); window.location.href='/admin';</script>")
+
+@app.post("/admin/clear_breaking")
+def clear_breaking(username: str = Depends(verify_admin)):
+    CURRENT_STATE["breaking_list"] = []
+    return HTMLResponse("<script>alert('تم مسح العواجل!'); window.location.href='/admin';</script>")
 
 @app.get("/admin/fetch_now")
 def fetch_now_endpoint(username: str = Depends(verify_admin)):
@@ -319,6 +352,15 @@ def approve_news(news_id: int, username: str = Depends(verify_admin)):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("UPDATE news SET status = 'approved' WHERE id = ?", (news_id,))
+    conn.commit()
+    conn.close()
+    return HTMLResponse("<script>window.location.href='/admin';</script>")
+
+@app.get("/admin/approve_all")
+def approve_all_news(username: str = Depends(verify_admin)):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE news SET status = 'approved' WHERE status = 'pending'")
     conn.commit()
     conn.close()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
@@ -364,13 +406,15 @@ def set_active_video(video_name: str = Form(...), username: str = Depends(verify
 
 @app.post("/set_active_song")
 def set_active_song(song_name: str = Form(...), username: str = Depends(verify_admin)):
-    CURRENT_STATE["media_type"] = "music"
+    # تفعيل وضع الصور تلقائياً لتعمل الموسيقى في الخلفية بشكل متزامن
+    CURRENT_STATE["media_type"] = "image"
     CURRENT_STATE["active_song"] = f"/music/{song_name}"
     CURRENT_STATE["song_playlist_started_at"] = time.time()
+    CURRENT_STATE["playlist_started_at"] = time.time()
     return HTMLResponse("<script>window.location.href='/admin';</script>")
 
 
-# --- صفحة البث المباشر المتزامن والمزودة بزر التشغيل وعواجل متتالية ---
+# --- صفحة البث المباشر المتزامن ---
 TICKER_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -383,21 +427,16 @@ TICKER_HTML = """
         .corner-logo { position: absolute; top: 60px; right: 15px; z-index: 100; width: 120px; pointer-events: none; }
         .corner-logo img { width: 100%; height: auto; }
         
-        /* شريط العواجل المتحرك */
-        .breaking-ticker { position: absolute; top: 0; left: 0; width: 100%; height: 45px; background: #b91c1c; color: #fff; display: flex; align-items: center; z-index: 1000; overflow: hidden; border-bottom: 2px solid #7f1d1d; }
-        .breaking-badge { background: #7f1d1d; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 15px; white-space: nowrap; z-index: 10; }
-        .breaking-content { font-size: 16px; font-weight: bold; white-space: nowrap; padding-right: 100%; animation: ticker-anim 25s linear infinite; }
+        /* العواجل - غير متحركة، مكانها فوق الشريط السفلي تماماً، تتبدل كل دقيقة */
+        .breaking-container { position: absolute; bottom: 50px; left: 0; width: 100%; height: 45px; background: #b91c1c; color: #fff; display: flex; align-items: center; z-index: 1000; border-top: 2px solid #7f1d1d; }
+        .breaking-badge { background: #7f1d1d; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 15px; white-space: nowrap; z-index: 10; border-left: 2px solid #991b1b; }
+        .breaking-content { font-size: 16px; font-weight: bold; padding: 0 15px; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-        /* الشريط العلوي (السويداء) */
-        .top-ticker-container { position: absolute; top: 45px; left: 0; width: 100%; height: 40px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; }
+        .top-ticker-container { position: absolute; top: 0; left: 0; width: 100%; height: 45px; background: rgba(20, 10, 30, 0.98); border-bottom: 2px solid #7b1fa2; display: flex; align-items: center; z-index: 1000; }
         .top-ticker-title { background: linear-gradient(135deg, #7b1fa2, #4a148c); color: #fff; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 14px; white-space: nowrap; }
 
-        .center-stage { position: absolute; top: 85px; left: 0; width: 100%; height: calc(100% - 135px); display: flex; justify-content: center; align-items: center; z-index: 10; background: #000; }
-        .youtube-card, .video-card, .image-card, .music-card { width: 100%; height: 100%; border: none; object-fit: contain; background: #000; }
-
-        /* زر التشغيل الشفاف لضمان عمل البث على الموبايل والكمبيوتر فوراً */
-        #play-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; cursor: pointer; }
-        #play-overlay button { background: #b91c1c; color: white; border: none; padding: 15px 35px; font-size: 20px; font-weight: bold; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 15px rgba(185,28,28,0.5); }
+        .center-stage { position: absolute; top: 45px; left: 0; width: 100%; height: calc(100% - 95px); display: flex; justify-content: center; align-items: center; z-index: 10; background: #000; }
+        .youtube-card, .video-card, .image-card { width: 100%; height: 100%; border: none; object-fit: contain; background: #000; }
 
         .ticker-container { position: absolute; bottom: 0; left: 0; width: 100%; height: 50px; background: rgba(8, 11, 20, 0.98); border-top: 2px solid #d4af37; display: flex; align-items: center; z-index: 1000; }
         .ticker-title { background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; font-size: 15px; white-space: nowrap; }
@@ -408,26 +447,23 @@ TICKER_HTML = """
     </style>
 </head>
 <body>
-    <div id="play-overlay" onclick="startStream()">
-        <div style="font-size: 50px; margin-bottom: 20px;">▶️</div>
-        <button>اضغط هنا لبدء البث المباشر والصوت</button>
-    </div>
-
     <div class="corner-logo"><img src="/logo.png" alt="Logo"></div>
     
-    <div class="breaking-ticker">
-        <div class="breaking-badge">عاجل 🔴</div>
-        <div class="ticker-wrap">
-            <div class="breaking-content" id="breaking-content">جاري التحميل...</div>
-        </div>
-    </div>
-
     <div class="top-ticker-container">
         <div class="top-ticker-title">أخبار السويداء</div>
         <div class="ticker-wrap"><div class="ticker-move" id="top-ticker-content">جاري التحميل...</div></div>
     </div>
 
     <div class="center-stage" id="stage-container"></div>
+    
+    <!-- مشغل الصوت المخفي للمزامنة -->
+    <audio id="global-audio"></audio>
+
+    <!-- العواجل: ثابتة وتتبدل كل دقيقة فوق الشريط السفلي -->
+    <div class="breaking-container" id="breaking-container" style="display:none;">
+        <div class="breaking-badge">عاجل 🔴</div>
+        <div class="breaking-content" id="breaking-content"></div>
+    </div>
 
     <div class="ticker-container">
         <div class="ticker-title">أخبار عالمية</div>
@@ -437,11 +473,6 @@ TICKER_HTML = """
     <script>
         let imageList = [], lastMediaType = "", lastYoutubeUrl = "", activeVideoUrl = "", activeSongUrl = "";
         
-        function startStream() {
-            document.getElementById('play-overlay').style.display = 'none';
-            checkLiveState();
-        }
-
         async function loadImages() {
             try { imageList = await (await fetch('/api/get_images')).json(); } catch(e){}
         }
@@ -461,53 +492,72 @@ TICKER_HTML = """
                 const state = await response.json();
                 const serverTime = state.server_time || (Date.now() / 1000);
                 
-                // تحديث العواجل المتتالية
+                // 1. نظام العواجل: ثابت ويتبدل كل 60 ثانية (دقيقة كاملة)
+                const breakingContainer = document.getElementById('breaking-container');
                 if (state.breaking_list && state.breaking_list.length > 0) {
-                    let breakingHtml = state.breaking_list.map(b => `<span class="ticker-item">🔴 ${b}</span>`).join(' &nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp; ');
-                    document.getElementById('breaking-content').innerHTML = breakingHtml;
+                    breakingContainer.style.display = 'flex';
+                    const b_idx = Math.floor(serverTime / 60) % state.breaking_list.length;
+                    document.getElementById('breaking-content').innerText = state.breaking_list[b_idx];
+                } else {
+                    breakingContainer.style.display = 'none';
                 }
 
                 document.getElementById('top-ticker-content').style.animation = `ticker-anim ${state.sweida_speed || 90}s linear infinite`;
                 document.getElementById('ticker-content').style.animation = `ticker-anim ${state.world_speed || 120}s linear infinite`;
 
+                const audio = document.getElementById('global-audio');
                 const stage = document.getElementById('stage-container');
+
+                // 2. المزامنة والتشغيل التلقائي (بدون زر)
                 if(state.media_type === 'youtube' && state.youtube_url) {
+                    if (!audio.paused) audio.pause();
                     let embedUrl = getYoutubeEmbedUrl(state.youtube_url);
                     if(embedUrl && (lastMediaType !== 'youtube' || lastYoutubeUrl !== state.youtube_url)) {
                         stage.innerHTML = `<iframe class="youtube-card" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
                         lastMediaType = 'youtube'; lastYoutubeUrl = state.youtube_url;
                     }
                 } else if(state.media_type === 'video' && state.active_video) {
+                    if (!audio.paused) audio.pause();
                     let vidEl = document.getElementById('synced-video');
                     let targetTime = serverTime - (state.video_playlist_started_at || serverTime);
                     if (!vidEl || lastMediaType !== 'video' || activeVideoUrl !== state.active_video) {
-                        stage.innerHTML = `<video id="synced-video" class="video-card" src="${state.active_video}" autoplay playsinline muted></video>`;
+                        stage.innerHTML = `<video id="synced-video" class="video-card" src="${state.active_video}" autoplay playsinline></video>`;
                         lastMediaType = 'video'; activeVideoUrl = state.active_video;
                         vidEl = document.getElementById('synced-video');
+                        vidEl.muted = false; 
+                        vidEl.play().catch(e=>{});
                     }
                     if (vidEl) {
                         if (vidEl.duration && !isNaN(vidEl.duration)) { targetTime = targetTime % vidEl.duration; }
                         if (Math.abs(vidEl.currentTime - targetTime) > 1.5) { vidEl.currentTime = targetTime; }
-                    }
-                } else if(state.media_type === 'music' && state.active_song) {
-                    let audioEl = document.getElementById('synced-audio');
-                    let targetTime = serverTime - (state.song_playlist_started_at || serverTime);
-                    if (!audioEl || lastMediaType !== 'music' || activeSongUrl !== state.active_song) {
-                        stage.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; height:100%; background:#111;"><h2 style="color:#d4af37; margin-bottom:20px;">🎵 بث صوتي مباشر</h2><audio id="synced-audio" src="${state.active_song}" autoplay controls></audio></div>`;
-                        lastMediaType = 'music'; activeSongUrl = state.active_song;
-                        audioEl = document.getElementById('synced-audio');
-                    }
-                    if (audioEl) {
-                        if (audioEl.duration && !isNaN(audioEl.duration)) { targetTime = targetTime % audioEl.duration; }
-                        if (Math.abs(audioEl.currentTime - targetTime) > 1.5) { audioEl.currentTime = targetTime; }
+                        if (vidEl.paused) { vidEl.play().catch(e=>{}); }
                     }
                 } else if(state.media_type === 'image') {
-                    if(lastMediaType !== 'image') { stage.innerHTML = `<div class="image-card" id="main-image" style="background-size:contain; background-repeat:no-repeat; background-position:center;"></div>`; lastMediaType = 'image'; }
+                    if (state.active_song) {
+                        if (activeSongUrl !== state.active_song) {
+                            audio.src = state.active_song;
+                            activeSongUrl = state.active_song;
+                            audio.play().catch(e => {});
+                        }
+                        let targetAudioTime = serverTime - (state.song_playlist_started_at || serverTime);
+                        if (audio.duration && !isNaN(audio.duration)) { targetAudioTime = targetAudioTime % audio.duration; }
+                        if (Math.abs(audio.currentTime - targetAudioTime) > 1.5) { audio.currentTime = targetAudioTime; }
+                        if (audio.paused) { audio.play().catch(e => {}); }
+                    }
+                    
+                    if(lastMediaType !== 'image') { 
+                        stage.innerHTML = `<div class="image-card" id="main-image" style="background-size:contain; background-repeat:no-repeat; background-position:center;"></div>`; 
+                        lastMediaType = 'image'; 
+                    }
                     if(imageList.length > 0) {
                         const playlistElapsed = serverTime - (state.playlist_started_at || serverTime);
                         const idx = Math.floor(playlistElapsed / 6) % imageList.length;
                         document.getElementById('main-image').style.backgroundImage = `url('${imageList[idx]}')`;
                     }
+                } else {
+                    stage.innerHTML = ``;
+                    if (!audio.paused) audio.pause();
+                    lastMediaType = 'none';
                 }
             } catch(e){}
         }
@@ -524,7 +574,7 @@ TICKER_HTML = """
         }
 
         loadImages(); updateTickers();
-        setInterval(checkLiveState, 1000);
+        setInterval(checkLiveState, 800);
         setInterval(updateTickers, 10000);
     </script>
 </body>
@@ -551,7 +601,7 @@ def get_approved_news():
     return {"top": top_items, "bottom": bottom_items}
 
 
-# --- الموقع الإخباري الاحترافي ---
+# --- الموقع الإخباري الاحترافي ولوحة إدارته (لم يتم المساس بها نهائياً) ---
 PORTAL_HOME_HTML = """
 <!DOCTYPE html>
 <html dir="{{ 'rtl' if lang != 'en' else 'ltr' }}" lang="{{ lang }}">
