@@ -1,0 +1,12 @@
+BASHAN LIVE STUDIO
+Third-Party Notices
+
+This project includes and depends on components from the Qt project, which are licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0) and/or the Qt Commercial license. Please refer to the Qt licensing documentation for the applicable terms for your deployment.
+
+This project is also designed to interoperate with OBS Studio components and FFmpeg-based broadcasting tooling. The project does not redistribute proprietary XSplit code or brand assets. The application is built as a legally distributable, OBS-inspired first release and is intended to be extended into a full upstream OBS integration in a future release.
+
+Any third-party component or binary included in a release should be accompanied by its original license text as required by that component's authors. For OBS Studio and FFmpeg, see:
+- https://github.com/obsproject/obs-studio
+- https://ffmpeg.org/legal.html
+
+The BASHAN LIVE STUDIO branding, logo, and product name are used for the Bashan Line broadcast platform and are maintained for the purpose of this project. If the upstream Bashan owner provides a final official logo asset, the project should replace the placeholder branding before production distribution.
